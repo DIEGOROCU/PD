@@ -1,0 +1,5 @@
+{
+  "code-runner.executorMap": {
+    "haskell": "C:\\ghcup\\bin\\runghc.exe"
+  }
+}
