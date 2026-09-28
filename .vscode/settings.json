@@ -1,5 +1,8 @@
 {
   "code-runner.executorMap": {
     "haskell": "C:\\ghcup\\bin\\runghc.exe"
+  },
+  "[haskell]": {
+    "editor.semanticHighlighting.enabled": true
   }
 }
