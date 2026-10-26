@@ -1,0 +1,10 @@
+instance Eq (Int -> Int) where
+	f == g = f 0 == g 0
+
+main :: IO ()
+main = do
+    let f1 = (\x -> x + 1) :: Int -> Int
+    let f2 = (\x -> x + 1) :: Int -> Int
+    let f3 = (\x -> x + 2) :: Int -> Int
+    print (f1 == f2) -- True
+    print (f1 == f3) -- False
