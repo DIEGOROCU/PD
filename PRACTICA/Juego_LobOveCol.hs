@@ -25,3 +25,4 @@ instance Jugable LobObeCol where
     -- TODO: Convendria tener una funcion es valida para validar que ninguna isla se quede como no deberia
     -- TODO: Ver donde guardar y manejar el tamaño maximo de la barca
     -- TODO: Implementar correctamente el uso de la posicion del barquero (se pueden alternar con succ)
+    -- TODO: Revisar como evitar bucles
