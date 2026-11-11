@@ -64,6 +64,7 @@ instance Jugable Sokoban where
 -- Fuciones Auxiliares
 --------------------------------------------------
 
+-- Listas de Casillas y Objetos
 listaPosicionesCasilla :: Posicion -> Casilla -> [Pos]
 listaPosicionesCasilla (_, mapa, _) casilla =
     M.keys $ M.filter (== casilla) mapa
@@ -72,4 +73,28 @@ listaPosicionesObjeto :: Posicion -> Objeto -> [Pos]
 listaPosicionesObjeto (_, _, objetos) objeto =
     M.keys $ M.filter (== objeto) objetos
 
+-- Suma de una posición y una dirección
+sumaDireccion :: Pos -> Direccion -> Pos
+sumaDireccion (x, y) dir = case dir of
+    Arriba      -> (x, y - 1)
+    Abajo       -> (x, y + 1)
+    Izquierda   -> (x - 1, y)
+    Derecha     -> (x + 1, y)
+
+-- Verifica si una acción es posible en la posición actual
 accionPosible :: Posicion -> Accion -> Bool
+accionPosible (jugadores, mapa, objetos) (posJugador, direccion) =
+    -- Revisamos que el inicio de la acción sea un jugador
+    posJugador `elem` jugadores &&
+    -- Revisamos que la casilla a la que se quiere mover el jugador es pisable
+    esPisable (mapa M.! posSiguiente) &&
+    -- Revisamos que la casilla a la que se quiere mover el jugador no esté ocupada por un objeto
+    not (M.member posSiguiente objetos)
+    where
+        posSiguiente = sumaDireccion posJugador direccion
+
+-- Verifica si una casilla es pisable (no es pared)
+esPisable :: Casilla -> Bool
+esPisable 
+    | Pared   -> False
+    | otherwise -> True
