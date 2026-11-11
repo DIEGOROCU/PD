@@ -1,4 +1,4 @@
-module Juegos.Juego_LobObeCol where
+module Juegos.Juego_LobOveCol where
 
 import Jugable 
 import qualified Data.Map as M
