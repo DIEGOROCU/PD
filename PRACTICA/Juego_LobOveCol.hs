@@ -8,24 +8,17 @@ data PosBarquero = Origen | Destino deriving (Eq, Ord, Enum, Show)
 
 type Posicion = (PosBarquero, M.Map Objeto Int, M.Map Objeto Int)
 
-data LobObeCol = Juego {
+data LobOveCol = Juego {
     capacidadBarca :: Int,
     posicionActual :: Posicion
 } deriving (Eq, Show)
 
 -- Aqui tenemos que agregar las relaciones de ganancia entre los objetos
 -- si añadimos más objetos, debemos actualizar esta función
--- quizás pueda ser buena idea que esta función sea más general 
-gana :: Objeto -> Objeto -> Bool
-gana o1 o2 
-    | o1 == Lobo && o2 == Oveja = True
-    | o1 == Oveja && o2 == Col = True
-    | otherwise = False
-
-ganaConCantidad :: (Objeto, Int) -> (Objeto, Int) -> Bool
-ganaConCantidad (o1, c1) (o2, c2) 
-    | c2 > 0 && c1 >= c2 && gana o1 o2 = True
-    | otherwise = False
+gana :: (Objeto, Int) -> (Objeto, Int) -> Bool
+gana (Lobo, c1) (Oveja, c2) = c1 > 0 && c2 > 0
+gana (Oveja, c1) (Col, c2) = c1 >= c2 && c2 > 0
+gana _ _ = False
 
 -- Dado un diccionario de objetos y sus cantidades (representando un lado del río)
 -- determina si hay conflictos entre los objetos presentes en ese lado del río
@@ -33,10 +26,10 @@ ladoSeguro :: M.Map Objeto Int -> Bool
 ladoSeguro objetos =
     let objetosList = M.toList objetos
         combinaciones = [ ((obj1, c1), (obj2, c2)) | (obj1, c1) <- objetosList, (obj2, c2) <- objetosList, obj1 /= obj2 ]
-    in not (any (uncurry ganaConCantidad) combinaciones)
+    in not (any (uncurry gana) combinaciones)
 
 -- Dado un estado del juego, determina si es un estado válido (sin conflictos)
-estadoValido :: LobObeCol -> Bool
+estadoValido :: LobOveCol -> Bool
 estadoValido (Juego _ (posBarquero, origen, destino))
     | posBarquero == Origen  = ladoSeguro destino
     | posBarquero == Destino = ladoSeguro origen
@@ -55,7 +48,8 @@ generarViajes cap banco =
     in filter (\m -> let tot = sum (M.elems m) in tot >= 1 && tot <= cap) (generar items)
 
 
-instance Jugable LobObeCol where
+-- Juego
+instance Jugable LobOveCol where
 
     -- Diccionario origen vacío
     esExito (Juego _ (_, origen, _)) = 
@@ -79,3 +73,24 @@ instance Jugable LobObeCol where
             
         -- Filtramos los movimientos generados para devolver solo los que no tienen conflictos
         in filter estadoValido nuevosEstados
+
+-- Ejemplos con solucion
+conSolucion :: LobOveCol
+conSolucion = 
+    [
+        -- Ejemplo 1
+        Juego 2 (Origen, M.fromList [(Lobo, 2), (Oveja, 2), (Col, 2)], M.empty), 
+
+        -- Ejemplo 2
+        Juego 3 (Origen, M.fromList [(Lobo, 1), (Oveja, 1), (Col, 1)], M.empty),
+    ]
+
+-- Ejemplos sin solucion
+sinSolucion :: LobOveCol
+    [
+        -- Ejemplo 1
+        Juego 1 (Origen, M.fromList [(Lobo, 1), (Oveja, 1), (Col, 1)], M.empty),
+
+        -- Ejemplo 2
+        Juego 1 (Origen, M.fromList [(Lobo, 2), (Oveja, 2)], M.empty),
+    ]
