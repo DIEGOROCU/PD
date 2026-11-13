@@ -82,7 +82,7 @@ conSolucion =
         Juego 2 (Origen, M.fromList [(Lobo, 2), (Oveja, 2), (Col, 2)], M.empty), 
 
         -- Ejemplo 2
-        Juego 3 (Origen, M.fromList [(Lobo, 1), (Oveja, 1), (Col, 1)], M.empty),
+        Juego 3 (Origen, M.fromList [(Lobo, 1), (Oveja, 1), (Col, 1)], M.empty)
     ]
 
 -- Ejemplos sin solucion
@@ -92,5 +92,5 @@ sinSolucion :: LobOveCol
         Juego 1 (Origen, M.fromList [(Lobo, 1), (Oveja, 1), (Col, 1)], M.empty),
 
         -- Ejemplo 2
-        Juego 1 (Origen, M.fromList [(Lobo, 2), (Oveja, 2)], M.empty),
+        Juego 1 (Origen, M.fromList [(Lobo, 2), (Oveja, 2)], M.empty)
     ]
