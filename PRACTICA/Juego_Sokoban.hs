@@ -70,8 +70,7 @@ instance Jugable Sokoban where
         [ Sok nuevaPosicion
         | jugador <- jugadores
         , direccion <- [Arriba, Abajo, Izquierda, Derecha]
-        , accion <- [Avanzar jugador direccion, MoverO jugador direccion,
-                     InteractuarO jugador direccion]
+        , accion <- [Avanzar jugador direccion, MoverO jugador direccion, InteractuarO jugador direccion]
         , Just nuevaPosicion <- [ejecutarAccion posicion accion]
         ]
 
@@ -181,7 +180,7 @@ tirarPosible mapa objetos posicion direccion =
     where
         cadena = cadenaObjetos objetos posicion (direccionContraria direccion)
         objetosCadena = map snd cadena
-        destino = sumaDireccion (fst (last cadena)) direccion
+        destino = sumaDireccion (fst (head cadena)) direccion
         casilla p = M.findWithDefault Pared p mapa
 
 -- Desplaza hacia el jugador todos los objetos de una cadena que está detrás.
@@ -346,3 +345,119 @@ direccionContraria Arriba = Abajo
 direccionContraria Abajo = Arriba
 direccionContraria Izquierda = Derecha
 direccionContraria Derecha = Izquierda
+--------------------------------------------------
+-- Ejemplos de Sokoban
+--------------------------------------------------
+
+mapa :: Int -> Int -> M.Map Pos Casilla
+mapa n m = M.fromList [((x, y), Suelo) | x <- [0..m - 1], y <- [0..n - 1]]
+
+-- Ejemplos de Sokoban con solucion
+conSolucionSokoban :: [Sokoban]
+conSolucionSokoban =
+    [
+        -- El jugador solo tiene que avanzar hasta la placa.
+        Sok ([(0, 0)], M.fromList [((0, 0), Suelo), ((1, 0), Placa)], M.empty),
+
+        -- La caja puede empujarse una casilla hasta la placa.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), Placa)],
+            M.fromList [((1, 0), Caja)]),
+
+        -- Las tres cajas se pueden empujar en fila recta hasta la placa.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), Suelo), ((3, 0), Suelo), ((4, 0), Placa)],
+            M.fromList [((1, 0), Caja), ((2, 0), Caja), ((3, 0), Caja)]),
+
+        -- La caja de metal puede empujarse hasta la placa porque no tiene otro objeto delante.
+        Sok ([(0, 0)],
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), Placa)],
+            M.fromList [((1, 0), CajaMetal)]),
+
+        -- El jugador activa el boton y despues llega a la placa por la puerta.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((0, 1), PuertaBoton), ((0, 2), Placa)],
+            M.fromList [((1, 0), Boton (0, 1))]),
+
+        -- El jugador activa la palanca y despues llega a la placa por la puerta.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((0, 1), PuertaPalanca), ((0, 2), Placa)],
+            M.fromList [((1, 0), Palanca (0, 1) False)]),
+
+        -- El barril puede empujarse hasta la placa.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), Placa)],
+            M.fromList [((1, 0), Barril)]),
+
+        -- Los cuatro barriles se pueden tirar desde la segunda columna hasta la primera placa.
+        Sok ([(1, 1)], 
+            M.union
+            (M.fromList [((1, 0), Placa), ((1, 1), Placa)])
+            (mapa 2 6),
+            M.fromList [((2, 1), Barril), ((3, 1), Barril),
+                        ((4, 1), Barril), ((5, 1), Barril)]),
+
+        -- Las cuatro cuerdas se pueden tirar desde la segunda columna hasta la primera placa.
+        Sok ([(1, 1)], 
+            M.union
+            (M.fromList [((1, 0), Placa), ((1, 1), Placa)])
+            (mapa 2 6),
+            M.fromList [((2, 1), Cuerda), ((3, 1), Cuerda),
+                        ((4, 1), Cuerda), ((5, 1), Cuerda)]),
+
+        -- La fila de barril, cuerda, barril y cuerda se puede tirar desde la segunda columna.
+        Sok ([(1, 1)], 
+            M.union
+            (M.fromList [((1, 0), Placa), ((1, 1), Placa)])
+            (mapa 2 6),
+            M.fromList [((2, 1), Barril), ((3, 1), Cuerda),
+                        ((4, 1), Barril), ((5, 1), Cuerda)]),
+
+        -- Los dos jugadores empujan sus cajas y luego pisan sus respectivas placas.
+        Sok ([(1, 0), (6, 0)], 
+            M.union
+            (M.fromList [((0, 0), Placa), ((3, 0), Placa), ((4, 0), Placa), ((7, 0), Placa)])
+            (mapa 1 8),
+            M.fromList [((2, 0), Caja), ((5, 0), Caja)])
+
+    ]
+
+-- Ejemplos de Sokoban sin solucion
+sinSolucionSokoban :: [Sokoban]
+sinSolucionSokoban =
+    [
+        -- La placa esta aislada por una pared.
+        Sok ([(0, 0)], M.fromList [((0, 0), Suelo), ((2, 0), Placa)], M.empty),
+
+        -- La caja esta contra una pared y no puede llegar a la placa.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), Pared), ((3, 0), Placa)],
+            M.fromList [((1, 0), Caja)]),
+
+        -- La puerta esta cerrada y no hay ningun boton que pueda abrirla.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), PuertaBoton), ((2, 0), Placa)],
+            M.empty),
+
+        -- La caja de metal no puede empujar la caja que tiene delante hasta la placa.
+        Sok ([(0, 0)], 
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), Suelo), ((3, 0), Placa)],
+            M.fromList [((1, 0), CajaMetal), ((2, 0), Caja)]),
+
+        -- La pared separa al segundo jugador de su placa y no puede completar el nivel.
+        Sok ([(1, 0), (6, 0)], 
+            M.union
+            (M.fromList [((0, 0), Placa), ((3, 0), Placa), ((4, 0), Placa), ((7, 0), Pared), ((8, 0), Placa)])
+            (mapa 1 9),
+            M.fromList [((2, 0), Caja), ((5, 0), Caja)])
+
+    ]
