@@ -31,9 +31,9 @@ type Pos = (Int, Int)
 
 -- Las accioes las hace el jugador, las reacciones los objetos
 data Accion
-    = Avanzar Pos Direccion
-    | MoverO Pos Direccion
-    | InteractuarO Pos Direccion
+    = AccionAvanzar Pos Direccion
+    | AccionMoverObjeto Pos Direccion
+    | AccionInteractuarObjeto Pos Direccion
     deriving (Eq, Show)
 
 type Reaccion = (Pos, Direccion)
@@ -70,7 +70,9 @@ instance Jugable Sokoban where
         [ Sok nuevaPosicion
         | jugador <- jugadores
         , direccion <- [Arriba, Abajo, Izquierda, Derecha]
-        , accion <- [Avanzar jugador direccion, MoverO jugador direccion, InteractuarO jugador direccion]
+        , accion <- [AccionAvanzar jugador direccion,
+                     AccionMoverObjeto jugador direccion,
+                     AccionInteractuarObjeto jugador direccion]
         , Just nuevaPosicion <- [ejecutarAccion posicion accion]
         ]
 
@@ -190,15 +192,15 @@ tirar objetos posicion direccion =
         (cadenaObjetos objetos posicion (direccionContraria direccion))
 
 ejecutarAccion :: Posicion -> Accion -> Maybe Posicion
-ejecutarAccion posicion (Avanzar posJugador direccion) =
-    avanzar posicion posJugador direccion
-ejecutarAccion posicion (MoverO posJugador direccion) =
-    moverObjetoAccion posicion posJugador direccion
-ejecutarAccion posicion (InteractuarO posJugador direccion) =
-    interactuarObjeto posicion posJugador direccion
+ejecutarAccion posicion (AccionAvanzar posJugador direccion) =
+    accionAvanzar posicion posJugador direccion
+ejecutarAccion posicion (AccionMoverObjeto posJugador direccion) =
+    accionMoverObjeto posicion posJugador direccion
+ejecutarAccion posicion (AccionInteractuarObjeto posJugador direccion) =
+    accionInteractuarObjeto posicion posJugador direccion
 
-avanzar :: Posicion -> Pos -> Direccion -> Maybe Posicion
-avanzar (jugadores, mapa, objetos) posJugador direccion
+accionAvanzar :: Posicion -> Pos -> Direccion -> Maybe Posicion
+accionAvanzar (jugadores, mapa, objetos) posJugador direccion
     -- Revisamos que el jugador esté en la lista de jugadores
     | posJugador `notElem` jugadores = 
         -- Si no, la acción no es posible
@@ -209,7 +211,7 @@ avanzar (jugadores, mapa, objetos) posJugador direccion
         Nothing
     -- Revisamos que no haya un objeto delante del jugador
     | M.member posSiguiente objetos = 
-        -- Si hay un objeto delante, la acción no es posible (no se puede empujar ni tirar con "Avanzar")
+        -- Si hay un objeto delante, la acción no es posible (no se puede empujar ni tirar con "AccionAvanzar")
         Nothing
     -- En caso de que no haya objetos delante ni detrás, simplemente movemos al jugador
     | otherwise =
@@ -224,7 +226,8 @@ avanzar (jugadores, mapa, objetos) posJugador direccion
         casilla p = M.findWithDefault Pared p mapa
 
 -- Mueve un objeto empujándolo o tirando de él.
-moverObjetoAccion (jugadores, mapa, objetos) posJugador direccion
+accionMoverObjeto :: Posicion -> Pos -> Direccion -> Maybe Posicion
+accionMoverObjeto (jugadores, mapa, objetos) posJugador direccion
     -- Revisamos que el jugador esté en la lista de jugadores
     | posJugador `notElem` jugadores =
         -- Si no, la acción no es posible
@@ -266,8 +269,8 @@ moverObjetoAccion (jugadores, mapa, objetos) posJugador direccion
         casilla p = M.findWithDefault Pared p mapa
 
 -- Interactúa con un botón o una palanca situados delante del jugador.
-interactuarObjeto :: Posicion -> Pos -> Direccion -> Maybe Posicion
-interactuarObjeto (jugadores, mapa, objetos) posJugador direccion
+accionInteractuarObjeto :: Posicion -> Pos -> Direccion -> Maybe Posicion
+accionInteractuarObjeto (jugadores, mapa, objetos) posJugador direccion
     -- Revisamos que el jugador esté en la lista de jugadores
     | posJugador `notElem` jugadores =
         -- Si no, la acción no es posible
