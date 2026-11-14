@@ -1,6 +1,6 @@
 module Jugable where
 
-class (Eq posicion, Show posicion) => Jugable posicion where
+class (Eq posicion, Ord posicion, Show posicion) => Jugable posicion where
     opciones :: posicion -> [posicion]
     esExito  :: posicion -> Bool
 

@@ -1,3 +1,3 @@
 TODO:
 - Implementar una forma adecuada para manejar acciones, lo existente solo permite moverse, pero deberia de incluir empujar y tirar de objetos
-- Sería interesante añadir casillas de "llave" (generica que se pueda usar en cualquier "puerta") y "botones" que al interactuar abran una "puerta" especifica
+- Sería interesante añadir casillas de "llave" (generica que se pueda usar en cualquier "puerta"), y placas que al ser posiadas por algun objeto abran una puerta solo durante ese tiempo (con por ejemplo alguna funcion que al final de la accion revise todos los objetos que hacen algo, como dichas placas, y hagan lo que tienen que hacer)

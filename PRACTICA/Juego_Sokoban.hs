@@ -11,11 +11,11 @@ import qualified Data.Map as M
 -- Definiciones de tipos
 --------------------------------------------------
 
-data Casilla = Pared | Placa | Suelo
+data Casilla = Pared | Placa | Suelo | PuertaBoton | PuertaPalanca
     deriving (Eq, Ord, Enum, Show)
 
-data Objeto = Caja | Barril | Cuerda | CajaMetal
-    deriving (Eq, Ord, Enum, Show)
+data Objeto = Caja | Barril | Cuerda | CajaMetal | Boton Pos | Palanca Pos Bool
+    deriving (Eq, Ord, Show)
 -- Nota:
     -- La caja se puede empujar en fila recta (tantas como se pueda)
     -- El barril se puede empujar y tirar en fila recta (tantos como se pueda)
@@ -30,7 +30,10 @@ data Direccion = Arriba | Abajo | Izquierda | Derecha
 type Pos = (Int, Int)
 
 -- Las accioes las hace el jugador, las reacciones los objetos
-data Accion = Avanzar Pos Direccion | MoverO Pos Direccion
+data Accion
+    = Avanzar Pos Direccion
+    | MoverO Pos Direccion
+    | InteractuarO Pos Direccion
     deriving (Eq, Show)
 
 type Reaccion = (Pos, Direccion)
@@ -47,7 +50,7 @@ type Posicion =
 
 -- Juego
 newtype Sokoban = Sok Posicion 
-    deriving (Eq, Show)
+    deriving (Eq, Ord, Show)
 
 --------------------------------------------------
 -- Instancia de Jugable
@@ -67,7 +70,8 @@ instance Jugable Sokoban where
         [ Sok nuevaPosicion
         | jugador <- jugadores
         , direccion <- [Arriba, Abajo, Izquierda, Derecha]
-        , accion <- [Avanzar jugador direccion, MoverO jugador direccion]
+        , accion <- [Avanzar jugador direccion, MoverO jugador direccion,
+                     InteractuarO jugador direccion]
         , Just nuevaPosicion <- [ejecutarAccion posicion accion]
         ]
 
@@ -95,6 +99,9 @@ sumaDireccion (x, y) dir = case dir of
 -- Verifica si una casilla es pisable (no es pared)
 esPisable :: Casilla -> Bool
 esPisable Pared = False
+-- La puerta del botón y la palanca son solidas cuando están cerradas
+esPisable PuertaBoton = False
+esPisable PuertaPalanca = False
 esPisable _ = True
 
 --------------------------------------------------
@@ -105,7 +112,11 @@ esPisable _ = True
 puedeEmpujar :: Objeto -> Bool
 puedeEmpujar Caja = True
 puedeEmpujar Barril = True
+puedeEmpujar Cuerda = False
 puedeEmpujar CajaMetal = False
+-- El botón y la palanca son inamovibles, por lo que no se pueden empujar
+puedeEmpujar (Boton _) = False
+puedeEmpujar (Palanca _ _) = False
 
 -- Un objeto puede ser tirado por el jugador si esta función devuelve True.
 puedeTirar :: Objeto -> Bool
@@ -113,6 +124,9 @@ puedeTirar Caja = False
 puedeTirar Barril = True
 puedeTirar Cuerda = True
 puedeTirar CajaMetal = False
+-- El botón y la palanca son inamovibles, por lo que no se pueden tirar de ellos
+puedeTirar (Boton _) = False
+puedeTirar (Palanca _ _) = False
 
 -- Un objeto puede moverse si esta función devuelve True.
 puedeMover :: Objeto -> Bool
@@ -120,6 +134,9 @@ puedeMover Caja = True
 puedeMover Barril = True
 puedeMover Cuerda = True
 puedeMover CajaMetal = True
+-- El botón y la palanca son inamovibles
+puedeMover (Boton _) = False
+puedeMover (Palanca _ _) = False
 
 -- Una cadena es válida si todos sus objetos pueden desplazarse y cada objeto, salvo el último, puede empujar al siguiente.
 cadenaEmpujable :: [Objeto] -> Bool
@@ -178,6 +195,8 @@ ejecutarAccion posicion (Avanzar posJugador direccion) =
     avanzar posicion posJugador direccion
 ejecutarAccion posicion (MoverO posJugador direccion) =
     moverObjetoAccion posicion posJugador direccion
+ejecutarAccion posicion (InteractuarO posJugador direccion) =
+    interactuarObjeto posicion posJugador direccion
 
 avanzar :: Posicion -> Pos -> Direccion -> Maybe Posicion
 avanzar (jugadores, mapa, objetos) posJugador direccion
@@ -220,9 +239,9 @@ moverObjetoAccion (jugadores, mapa, objetos) posJugador direccion
         if empujePosible mapa objetos posSiguiente direccion
         then Just
             (
-            moverJugador jugadores posJugador posSiguiente,
-            mapa,
-            empujar objetos posSiguiente direccion
+                moverJugador jugadores posJugador posSiguiente,
+                mapa,
+                empujar objetos posSiguiente direccion
             )
         -- Si no se puede empujar, la acción no es posible
         else
@@ -232,9 +251,9 @@ moverObjetoAccion (jugadores, mapa, objetos) posJugador direccion
         if tirarPosible mapa objetos posAnterior direccion
         then Just
             (
-            moverJugador jugadores posJugador posSiguiente,
-            mapa,
-            tirar objetos posAnterior direccion
+                moverJugador jugadores posJugador posSiguiente,
+                mapa,
+                tirar objetos posAnterior direccion
             )
         -- Si no se puede tirar, la acción no es posible
         else
@@ -247,24 +266,61 @@ moverObjetoAccion (jugadores, mapa, objetos) posJugador direccion
         posAnterior = sumaDireccion posJugador (direccionContraria direccion)
         casilla p = M.findWithDefault Pared p mapa
 
+-- Interactúa con un botón o una palanca situados delante del jugador.
+interactuarObjeto :: Posicion -> Pos -> Direccion -> Maybe Posicion
+interactuarObjeto (jugadores, mapa, objetos) posJugador direccion
+    -- Revisamos que el jugador esté en la lista de jugadores
+    | posJugador `notElem` jugadores =
+        -- Si no, la acción no es posible
+        Nothing
+    -- Si el jugador tiene un objeto interactuable delante, se interactua
+    | otherwise =
+        case M.lookup posObjeto objetos of
+            -- Si hay un botón delante, buscamos su puerta asociada
+            Just (Boton posPuerta)
+                -- Revisamos que la puerta asociada esté cerrada
+                | M.lookup posPuerta mapa == Just PuertaBoton ->
+                    -- Abrimos la puerta sin mover al jugador ni al botón
+                    Just
+                    (
+                        jugadores, 
+                        M.insert posPuerta Suelo mapa, 
+                        objetos
+                    )
+            -- Si hay una palanca delante, cambiamos su estado y el de su puerta
+            Just (Palanca posPuerta activada) ->
+                if M.lookup posPuerta mapa ==
+                    -- Revisamos que concuerde el estado de la palanca con el estado de la puerta asociada
+                    Just (if activada then Suelo else PuertaPalanca)
+                then
+                    -- Cambiamos el estado de la palanca y de la puerta asociada
+                    let nuevaActivacion = not activada
+                        nuevaPuerta = if nuevaActivacion
+                            then Suelo
+                            else PuertaPalanca
+                        nuevosObjetos = M.insert posObjeto
+                            (Palanca posPuerta nuevaActivacion) objetos
+                    in Just 
+                    -- Cambiamos el estado de la palanca y de la puerta asociada, sin mover al jugador
+                    (
+                        jugadores, 
+                        M.insert posPuerta nuevaPuerta mapa,
+                        nuevosObjetos
+                    )
+                -- Si la palanca y la puerta no concuerdan, la acción no es posible
+                else
+                    Nothing
+            -- Si no hay botón/palanca o la puerta del botón no está cerrada, la acción no es posible
+            _ -> Nothing
+    where
+        posObjeto = sumaDireccion posJugador direccion
+
 -- Indica si el jugador puede realizar la acción.
 accionPosible :: Posicion -> Accion -> Bool
 accionPosible posicion accion =
     case ejecutarAccion posicion accion of
         Nothing -> False
         Just _ -> True
-
--- Indica si un objeto puede reaccionar a una acción de empuje.
-reaccionPosible :: Posicion -> Reaccion -> Bool
-reaccionPosible (_, mapa, objetos) (posObjeto, direccion) =
-    empujePosible mapa objetos posObjeto direccion
-
-objetoRecibeAccion :: Posicion -> Accion -> Maybe Reaccion
-objetoRecibeAccion posicion (MoverO posObjeto direccion)
-    | reaccionPosible posicion (posObjeto, direccion) =
-        Just (posObjeto, direccion)
-    | otherwise = Nothing
-objetoRecibeAccion _ (Avanzar _ _) = Nothing
 
 moverJugador :: [Pos] -> Pos -> Pos -> [Pos]
 moverJugador jugadores origen destino =
