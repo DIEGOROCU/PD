@@ -11,7 +11,7 @@ type Posicion = (PosBarquero, M.Map Objeto Int, M.Map Objeto Int)
 data LobOveCol = Juego {
     capacidadBarca :: Int,
     posicionActual :: Posicion
-} deriving (Eq, Show)
+} deriving (Eq, Ord, Show)
 
 -- Aqui tenemos que agregar las relaciones de ganancia entre los objetos
 -- si añadimos más objetos, debemos actualizar esta función
@@ -75,7 +75,7 @@ instance Jugable LobOveCol where
         in filter estadoValido nuevosEstados
 
 -- Ejemplos con solucion
-conSolucion :: LobOveCol
+conSolucion :: [LobOveCol]
 conSolucion = 
     [
         -- Ejemplo 1
@@ -86,7 +86,8 @@ conSolucion =
     ]
 
 -- Ejemplos sin solucion
-sinSolucion :: LobOveCol
+sinSolucion :: [LobOveCol]
+sinSolucion =
     [
         -- Ejemplo 1
         Juego 1 (Origen, M.fromList [(Lobo, 1), (Oveja, 1), (Col, 1)], M.empty),
