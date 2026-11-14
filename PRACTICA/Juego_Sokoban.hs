@@ -21,6 +21,8 @@ data Objeto = Caja | Barril | Cuerda | CajaMetal | Boton Pos | Palanca Pos Bool
     -- El barril se puede empujar y tirar en fila recta (tantos como se pueda)
     -- La cuerda solo se puede tirar en fila recta (tantas como se pueda)
     -- La caja de metal se puede empujar, pero no puede seguir empujando a otro objeto (solo puede empujar uno)
+    -- El botón se puede activar para abrir una puerta asociada definitivamente (no se puede cerrar)
+    -- La palanca se puede activar para abrir o cerrar una puerta asociada (se puede activar varias veces)
 
 -- Posicion del jugadory y la dirección en la que se mueve
 
@@ -71,8 +73,8 @@ instance Jugable Sokoban where
         | jugador <- jugadores
         , direccion <- [Arriba, Abajo, Izquierda, Derecha]
         , accion <- [AccionAvanzar jugador direccion,
-                     AccionMoverObjeto jugador direccion,
-                     AccionInteractuarObjeto jugador direccion]
+                    AccionMoverObjeto jugador direccion,
+                    AccionInteractuarObjeto jugador direccion]
         , Just nuevaPosicion <- [ejecutarAccion posicion accion]
         ]
 
