@@ -11,8 +11,16 @@ import qualified Data.Map as M
 -- Definiciones de tipos
 --------------------------------------------------
 
-data Casilla = Pared | Placa | Suelo | PuertaBoton | PuertaPalanca
-    deriving (Eq, Ord, Enum, Show)
+data Casilla = Pared | Placa | PlacaActivadoraTemporizada Pos | PuertaTemporizada Bool Int Int | Suelo | PuertaBoton | PuertaPalanca
+    deriving (Eq, Ord, Show)
+-- Nota:
+    -- La pared es solida y no se puede atravesar
+    -- La placa es pisable y se puede atravesar, se necesitan pisar todas por el jugador o un objeto para ganar
+    -- La placa activadora temporizada es pisable y abre su puerta cuando está ocupada.
+    -- La puerta temporizada es sólida cuando está cerrada y se cierra tras su duración.
+    -- El suelo es pisable y se puede atravesar
+    -- La puerta de boton es solida y se puede atravesar, se abre cuando el jugador activa el boton asociado permantentemente
+    -- La puerta de palanca es solida y se puede atravesar, se abre o cierra cuando el jugador activa la palanca asociada, se puede activar varias veces
 
 data Objeto = Caja | Barril | Cuerda | CajaMetal | Boton Pos | Palanca Pos Bool
     deriving (Eq, Ord, Show)
@@ -105,6 +113,7 @@ esPisable Pared = False
 -- La puerta del botón y la palanca son solidas cuando están cerradas
 esPisable PuertaBoton = False
 esPisable PuertaPalanca = False
+esPisable (PuertaTemporizada abierta _ _) = abierta
 esPisable _ = True
 
 --------------------------------------------------
@@ -193,12 +202,54 @@ tirar objetos posicion direccion =
     foldr (desplazarObjeto direccion) objetos
         (cadenaObjetos objetos posicion (direccionContraria direccion))
 
+-- Actualiza el estado de las puertas de placas despues de cada accion.
+actualizarPuertas :: Posicion -> Posicion
+actualizarPuertas (jugadores, mapa, objetos) =
+    -- Conservamos jugadores y objetos y actualizamos solo las casillas del mapa.
+    (jugadores, M.mapWithKey actualizar mapa, objetos)
+    where
+        -- Una placa esta ocupada si la pisa un jugador o hay un objeto sobre ella.
+        ocupadas = jugadores ++ M.keys objetos
+
+        -- Las puertas de placas actualizan su temporizador; el resto de casillas no cambia.
+        actualizar posicion (PuertaTemporizada abierta tiempo duracion) =
+            actualizarPuerta posicion abierta tiempo duracion
+        actualizar _ casilla = casilla
+
+        -- Una puerta abierta sigue abierta mientras le queden acciones.
+        actualizarPuerta posicion abierta tiempo duracion
+            | abierta && tiempo > 1 = PuertaTemporizada True (tiempo - 1) duracion
+            -- Cuando se consume la ultima accion, la puerta vuelve a cerrarse.
+            | abierta = PuertaTemporizada False (-1) duracion
+            -- Una puerta cerrada se abre si todas sus placas estan ocupadas.
+            | placasActivadas posicion = PuertaTemporizada True duracion duracion
+            -- Si no se cumplen las condiciones, la puerta permanece cerrada.
+            | otherwise = PuertaTemporizada False (-1) duracion
+
+        -- Comprueba si todas las placas asociadas a una puerta estan ocupadas.
+        placasActivadas posicion =
+            not (null placas) && all (`elem` ocupadas) placas
+            where
+                -- Reunimos las posiciones de las placas asociadas a esta puerta.
+                placas = [posicionPlaca
+                        | (posicionPlaca, PlacaActivadoraTemporizada puerta) <- M.toList mapa, puerta == posicion]
+
+-- Reune todas las actualizaciones que deben hacerse al final de cada turno.
+actualizacionFinal :: Posicion -> Posicion
+actualizacionFinal = actualizarPuertas
+
 ejecutarAccion :: Posicion -> Accion -> Maybe Posicion
-ejecutarAccion posicion (AccionAvanzar posJugador direccion) =
+ejecutarAccion posicion accion =
+    case ejecutarAccionSinActualizar posicion accion of
+        Nothing -> Nothing
+        Just nuevaPosicion -> Just (actualizacionFinal nuevaPosicion)
+
+ejecutarAccionSinActualizar :: Posicion -> Accion -> Maybe Posicion
+ejecutarAccionSinActualizar posicion (AccionAvanzar posJugador direccion) =
     accionAvanzar posicion posJugador direccion
-ejecutarAccion posicion (AccionMoverObjeto posJugador direccion) =
+ejecutarAccionSinActualizar posicion (AccionMoverObjeto posJugador direccion) =
     accionMoverObjeto posicion posJugador direccion
-ejecutarAccion posicion (AccionInteractuarObjeto posJugador direccion) =
+ejecutarAccionSinActualizar posicion (AccionInteractuarObjeto posJugador direccion) =
     accionInteractuarObjeto posicion posJugador direccion
 
 accionAvanzar :: Posicion -> Pos -> Direccion -> Maybe Posicion
@@ -429,7 +480,14 @@ conSolucionSokoban =
             M.union
             (M.fromList [((0, 0), Placa), ((3, 0), Placa), ((4, 0), Placa), ((7, 0), Placa)])
             (mapa 1 8),
-            M.fromList [((2, 0), Caja), ((5, 0), Caja)])
+            M.fromList [((2, 0), Caja), ((5, 0), Caja)]),
+
+        -- Ambos jugadores activan la puerta y el jugador superior cruza hasta la unica placa final.
+        Sok ([(0, 0), (0, 1)],
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), PlacaActivadoraTemporizada (6, 0)), ((3, 0), Suelo), ((4, 0), Suelo), ((5, 0), Suelo), ((6, 0), PuertaTemporizada False (-1) 6), ((7, 0), Suelo), ((8, 0), Placa), 
+            ((0, 1), Suelo), ((1, 1), Suelo), ((2, 1), PlacaActivadoraTemporizada (6, 0))], 
+            M.empty)
 
     ]
 
@@ -463,6 +521,13 @@ sinSolucionSokoban =
             M.union
             (M.fromList [((0, 0), Placa), ((3, 0), Placa), ((4, 0), Placa), ((7, 0), Pared), ((8, 0), Placa)])
             (mapa 1 9),
-            M.fromList [((2, 0), Caja), ((5, 0), Caja)])
+            M.fromList [((2, 0), Caja), ((5, 0), Caja)]),
+
+        -- La puerta se cierra antes de que el jugador superior pueda llegar a la placa final.
+        Sok ([(0, 0), (0, 1)],
+            M.fromList
+            [((0, 0), Suelo), ((1, 0), Suelo), ((2, 0), PlacaActivadoraTemporizada (6, 0)), ((3, 0), Suelo), ((4, 0), Suelo), ((5, 0), Suelo), ((6, 0), PuertaTemporizada False (-1) 2), ((7, 0), Suelo), ((8, 0), Placa), 
+            ((0, 1), Suelo), ((1, 1), Suelo), ((2, 1), PlacaActivadoraTemporizada (6, 0))], 
+            M.empty)
 
     ]
