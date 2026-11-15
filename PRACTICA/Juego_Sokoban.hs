@@ -213,11 +213,11 @@ actualizarPuertas (jugadores, mapa, objetos) =
 
         -- Las puertas de placas actualizan su temporizador; el resto de casillas no cambia.
         actualizar posicion (PuertaTemporizada abierta tiempo duracion) =
-            actualizarPuerta posicion abierta tiempo duracion
+            actualizarPuertaTemporizada posicion abierta tiempo duracion
         actualizar _ casilla = casilla
 
         -- Una puerta abierta sigue abierta mientras le queden acciones.
-        actualizarPuerta posicion abierta tiempo duracion
+        actualizarPuertaTemporizada posicion abierta tiempo duracion
             | abierta && tiempo > 1 = PuertaTemporizada True (tiempo - 1) duracion
             -- Cuando se consume la ultima accion, la puerta vuelve a cerrarse.
             | abierta = PuertaTemporizada False (-1) duracion
