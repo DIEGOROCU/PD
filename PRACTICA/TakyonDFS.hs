@@ -1,69 +1,69 @@
-{-# LANGUAGE BangPatterns #-}      -- Permite usar '!' para forzar evaluación estricta
-{-# OPTIONS_GHC -O2 #-}            -- Obliga al compilador a aplicar la máxima optimización (inlining y código nativo)
+{-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -O2 -funbox-strict-fields -fspec-constr -fdicts-strict #-}
 module Resolutores.TakyonDFS (resolutor) where
 
 import Jugable
-import Data.Bits (xor)
-import qualified Data.IntMap.Strict as IM
+import qualified Data.Set as S
 
 {-|
-  Resolutor: DFS "Takyon" (Búsqueda en Profundidad Rápida)
+  Resolutor: DFS "Takyon"
   Autores: Pau Frangi y Diego Rodríguez
+
+  Hemos implementado un DFS con las siguientes mejoras para aumtentar la velocidad y reducir el consumo de memoria:
+  - Uso directo de Data.Set con Ord (antes convertíamos estados con 'show' pero eso era más lento y consumía más memoria).
+  - En lugar de llamar a 'member' y luego a 'insert' (recorriendo el árbol dos veces), 
+     insertamos directamente y comprobamos si ha cambiado 'S.size'.
+  - 'Pila' guarda solo la rama activa y los hermanos por explorar. Así no copiamos listas de caminos en cada paso y solo
+     reconstruimos la solución una vez al llegar a la meta.
+  - El uso de '!' (BangPatterns) evita acumular cálculos pendientes en memoria, y los flags de GHC (-O2,
+     -funbox-strict-fields, -fdicts-strict e INLINABLE) desempaquetan los campos
+     de la pila y generan código especializado para cada juego.
 -}
 
--- Hash FNV-1a (64 bits). Implementación directa y recursiva para minimizar
--- el uso de memoria.
-hashRapido :: String -> Int
-hashRapido = go 14695981039346656037
-  where
-    go !h [] = h
-    go !h (c:cs) = go ((h `xor` fromEnum c) * 1099511628211) cs
+-- Pila estricta para retroceder: guarda el nodo padre, sus hijos pendientes y el resto de la rama.
+data Pila pos = Fin | Rama !pos ![pos] !(Pila pos)
 
 resolutor :: Jugable pos => Resolutor pos
 resolutor inicio
     | esExito inicio = Just [inicio]
-    | otherwise      = dfs inicialMemoria [(inicio, [inicio])]
+    | otherwise      = expandir inicio Fin (S.singleton inicio)
   where
-    -- Guardamos el hash del estado inicial en el Radix Tree (IntMap)
-    !inicialMemoria = IM.singleton (hashRapido (show inicio)) [inicio]
+    -- Genera los hijos del estado actual, mira si alguno gana y baja por el primero válido.
+    expandir :: Jugable pos => pos -> Pila pos -> S.Set pos -> Maybe [pos]
+    expandir !actual !pila !vis =
+        case procesar (opciones actual) vis [] of
+            Left ganador             -> Just (reconstruir ganador (Rama actual [] pila))
+            Right (!vis', [])        -> retroceder pila vis'
+            Right (!vis', sig:resto) ->
+                expandir sig (Rama actual resto pila) vis'
 
-    -- Motor DFS estricto (!). Fuerza el procesamiento inmediato para que GHC
-    -- no acumule basura (thunks) que dispare el Garbage Collector.
-    dfs :: Jugable pos => IM.IntMap [pos] -> [(pos, [pos])] -> Maybe [pos]
-    dfs !_ [] = Nothing
-    dfs !visitados ((actual, camino) : pila) =
-        -- Inyección LIFO directa: pasamos la 'pila' entera como acumulador final
-        -- (para no usar el operador (++) que es lento)
-        let (!encontrado, !nuevosVisitados, !nuevaPila) = 
-                expandir (opciones actual) visitados camino pila
-        in case encontrado of
-             Just sol -> Just sol
-             Nothing  -> dfs nuevosVisitados nuevaPila
+    -- Vuelve hacia atrás en la pila hasta encontrar un hermano que falte por explorar.
+    retroceder :: Jugable pos => Pila pos -> S.Set pos -> Maybe [pos]
+    retroceder Fin !_ = Nothing
+    retroceder (Rama _ [] anc) !vis = retroceder anc vis
+    retroceder (Rama padre (sig:resto) anc) !vis =
+        expandir sig (Rama padre resto anc) vis
 
-    -- Motor de expansión que genera hijos, filtra visitados y apila en bloque
-    expandir :: Jugable pos 
-             => [pos] 
-             -> IM.IntMap [pos] 
-             -> [pos] 
-             -> [(pos, [pos])] 
-             -> (Maybe [pos], IM.IntMap [pos], [(pos, [pos])])
-    expandir [] !vis _ !pilaAcc = (Nothing, vis, pilaAcc)
-    expandir (x:xs) !vis cam !pilaAcc
-        -- Poda Temprana: si ganamos, aborta al instante todo el cálculo colateral
-        | esExito x = (Just (reverse (x:cam)), vis, [])
+    -- Recorre la pila desde la meta hasta el inicio para crear la lista solución en orden.
+    reconstruir :: pos -> Pila pos -> [pos]
+    reconstruir !ganador = go [ganador]
+      where
+        go !acc Fin = acc
+        go !acc (Rama p _ anc) = go (p : acc) anc
+
+    -- Comprueba si algún hijo es meta y filtra los ya visitados en un solo acceso al Set.
+    procesar :: Jugable pos
+             => [pos]
+             -> S.Set pos
+             -> [pos]
+             -> Either pos (S.Set pos, [pos])
+    procesar [] !vis !acc = Right (vis, acc)
+    procesar (x:xs) !vis !acc
+        | esExito x = Left x
         | otherwise =
-            let !h = hashRapido (show x)
-            -- Búsqueda O(1) usando el hash numérico a nivel de bits
-            in case IM.lookup h vis of
-                 Just guardados 
-                   -- Comprobamos (==) solo si el hash coincide para evitar falsos positivos
-                   | x `elem` guardados -> 
-                       expandir xs vis cam pilaAcc
-                   | otherwise -> 
-                       -- Estado nuevo, pero hubo colisión de hash (casi imposible). Inserción O(1)
-                       let !vis' = IM.insert h (x : guardados) vis
-                       in expandir xs vis' cam ((x, x:cam) : pilaAcc)
-                 Nothing -> 
-                     -- Estado limpio. Se guarda en el IntMap y se inyecta directamente en la pilaAcc
-                     let !vis' = IM.insert h [x] vis
-                     in expandir xs vis' cam ((x, x:cam) : pilaAcc)
+            let !vis' = S.insert x vis
+            -- S.size cuesta O(1): si no aumenta, 'x' ya estaba visitado.
+            in if S.size vis' == S.size vis
+               then procesar xs vis acc
+               else procesar xs vis' (x : acc)
+{-# INLINABLE resolutor #-}
