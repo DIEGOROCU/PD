@@ -7,3 +7,4 @@ TODO:
 - Deberiamos revisar que los ejemplos son "correctos" de forma automatica? (en una posicion no puede haber una pared y una caja por ejemplo)
 - Ordenar las funciones auxiliares en categorias por orden
 - Ultima modificacion gigante: Añadir dimension arbitraria (no solo 2 por 2). Mi primera idea es hacer que las direcciones sean un mapa de: Dimension -> -1, 0, 1 con un unico -1/1
+- Otra modifiación gigante: En vez de añadir dimension arbitraría, podría ser más interesante añadir 3D con gravedad (y que no sea solo una modificacion de sintaxis para abstraer pares a n-tuplas)
