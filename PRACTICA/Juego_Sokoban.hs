@@ -11,8 +11,16 @@ import qualified Data.Map as M
 -- Definiciones de tipos
 --------------------------------------------------
 
-data Casilla = Pared | Placa | Aire | PuertaBoton | PuertaPalanca | Escalera
-    deriving (Eq, Ord, Enum, Show)
+data Casilla
+    = Pared
+    | Placa
+    | Aire
+    | PuertaBoton
+    | PuertaPalanca
+    | Escalera
+    | PlacaActivadoraTemporizada Posicion
+    | PuertaTemporizada Bool Int Int
+    deriving (Eq, Ord, Show)
 
 data Objeto = Caja | Barril | Cuerda | CajaMetal | Globo | Boton Posicion | Palanca Posicion Bool
     deriving (Eq, Ord, Show)
@@ -115,21 +123,23 @@ esDireccionVertical _      = False
 esDireccionHorizontal :: Direccion -> Bool
 esDireccionHorizontal = not . esDireccionVertical
 
--- Verifica si una casilla es pisable/atravesable (no es pared, puerta cerrada ni escalera sólida)
+-- Verifica si una casilla es pisable/atravesable
 esPisable :: Casilla -> Bool
-esPisable Pared         = False
-esPisable PuertaBoton   = False
-esPisable PuertaPalanca = False
-esPisable Escalera      = False
-esPisable _             = True
+esPisable Pared                          = False
+esPisable PuertaBoton                    = False
+esPisable PuertaPalanca                  = False
+esPisable Escalera                       = False
+esPisable (PuertaTemporizada abierta _ _) = abierta
+esPisable _                              = True
 
 -- Verifica si una casilla actúa como suelo sólido que soporta peso encima
 esSueloSolido :: Casilla -> Bool
-esSueloSolido Pared         = True
-esSueloSolido PuertaBoton   = True
-esSueloSolido PuertaPalanca = True
-esSueloSolido Escalera      = True
-esSueloSolido _             = False
+esSueloSolido Pared                          = True
+esSueloSolido PuertaBoton                    = True
+esSueloSolido PuertaPalanca                  = True
+esSueloSolido Escalera                       = True
+esSueloSolido (PuertaTemporizada abierta _ _) = not abierta
+esSueloSolido _                              = False
 
 --------------------------------------------------
 -- Metodos auxiliares complejos
@@ -304,10 +314,48 @@ aplicarGravedad estado@(jugadores, mapaJuego, objetos)
             | otherwise =
                 M.insert pos obj acc
 
--- Ejecuta una acción y estabiliza el estado resultante aplicando la gravedad.
+-- Actualiza el estado de las puertas temporizadas después de cada acción.
+actualizarPuertas :: Estado -> Estado
+actualizarPuertas (jugadores, mapaJuego, objetos) =
+    (jugadores, M.mapWithKey actualizar mapaJuego, objetos)
+    where
+        ocupadas = jugadores ++ M.keys objetos
+
+        actualizar posicion (PuertaTemporizada abierta tiempo duracion) =
+            actualizarPuerta posicion abierta tiempo duracion
+        actualizar _ casilla = casilla
+
+        actualizarPuerta posicion abierta tiempo duracion
+            | abierta && tiempo > 1 =
+                PuertaTemporizada True (tiempo - 1) duracion
+            -- Si el tiempo se agota pero alguien ocupa el hueco de la puerta, espera 1 turno a que salga
+            | abierta && posicion `elem` ocupadas =
+                PuertaTemporizada True 1 duracion
+            -- Cuando se consume la última acción y el hueco está libre, la puerta vuelve a cerrarse
+            | abierta =
+                PuertaTemporizada False (-1) duracion
+            -- Una puerta cerrada se abre si todas sus placas asociadas están ocupadas
+            | placasActivadas posicion =
+                PuertaTemporizada True duracion duracion
+            | otherwise =
+                PuertaTemporizada False (-1) duracion
+
+        placasActivadas posicion =
+            not (null placas) && all (`elem` ocupadas) placas
+            where
+                placas = [ posicionPlaca
+                         | (posicionPlaca, PlacaActivadoraTemporizada puerta) <- M.toList mapaJuego
+                         , puerta == posicion
+                         ]
+
+-- Reúne todas las actualizaciones al final de cada turno (gravedad -> temporizadores -> gravedad).
+actualizacionFinal :: Estado -> Estado
+actualizacionFinal = aplicarGravedad . actualizarPuertas . aplicarGravedad
+
+-- Ejecuta una acción y aplica gravedad y actualización de puertas temporizadas.
 ejecutarAccion :: Estado -> Accion -> Maybe Estado
 ejecutarAccion estado accion =
-    fmap aplicarGravedad (ejecutarAccionSinGravedad estado accion)
+    fmap actualizacionFinal (ejecutarAccionSinGravedad estado accion)
 
 ejecutarAccionSinGravedad :: Estado -> Accion -> Maybe Estado
 ejecutarAccionSinGravedad estado (AccionAvanzar posJugador direccion) =
@@ -485,11 +533,13 @@ conSolucion =
     [
     Sok ( [(0, 0, 0)]
         , M.unions
-            [ -- PLANTA BAJA (z = 0): sala de CajaMetal, Palanca, pasillo al Globo y pozo final
-              M.fromList [ ((3, 0, 0), Placa)         -- 1. Objetivo CajaMetal
-                         , ((8, 0, 0), Placa)         -- 6. Objetivo Barril que cae desde z=4
-                         , ((5, 2, 0), PuertaPalanca) -- Puerta controlada por Palanca (3,1,0)
-                         , ((6, 1, 0), Escalera)      -- Base Escalera 1
+            [ -- PLANTA BAJA (z = 0): sala de CajaMetal, Palanca, placa/puerta temporizada, pasillo al Globo y pozo final
+              M.fromList [ ((3, 0, 0), Placa)                                  -- 1. Objetivo CajaMetal
+                         , ((8, 0, 0), Placa)                                  -- 6. Objetivo Barril que cae desde z=4
+                         , ((5, 2, 0), PuertaPalanca)                          -- Puerta controlada por Palanca (3,1,0)
+                         , ((4, 2, 0), PlacaActivadoraTemporizada (6, 2, 0))   -- Placa temporizada (abre (6,2,0) 7 turnos)
+                         , ((6, 2, 0), PuertaTemporizada False (-1) 7)         -- Puerta temporizada antes del Globo
+                         , ((6, 1, 0), Escalera)                               -- Base Escalera 1
                          , ((0, 1, 0), Pared), ((1, 1, 0), Pared)
                          , ((0, 2, 0), Pared), ((1, 2, 0), Pared)
                          , ((4, 0, 0), Pared), ((5, 0, 0), Pared), ((6, 0, 0), Pared), ((7, 0, 0), Pared), ((9, 0, 0), Pared)
