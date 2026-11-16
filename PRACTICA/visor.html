@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Visor 3D Pro - Sokoban</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; overflow: hidden;
+      background: radial-gradient(circle at center, #1e293b 0%, #090d16 100%);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #f8fafc;
+    }
+    #ui {
+      position: absolute; top: 16px; left: 16px; z-index: 10;
+      width: 340px;
+      background: rgba(15, 23, 42, 0.78);
+      padding: 16px; border-radius: 14px;
+      display: flex; flex-direction: column; gap: 12px;
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px;
+    }
+    .header h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: 0.3px; color: #38bdf8; }
+    .badge {
+      font-size: 11px; background: rgba(56, 189, 248, 0.15); color: #7dd3fc;
+      padding: 2px 8px; border-radius: 999px; font-weight: 600;
+    }
+    .file-label {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      background: rgba(30, 41, 59, 0.9); border: 1px dashed rgba(148, 163, 184, 0.4);
+      padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+      transition: all 0.2s;
+    }
+    .file-label:hover { border-color: #38bdf8; background: rgba(30, 41, 59, 1); }
+    #fileInput { display: none; }
+
+    .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    button {
+      background: #2563eb; color: white; border: none; padding: 8px 6px;
+      border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 12px;
+      transition: transform 0.1s, background 0.2s;
+    }
+    button:hover:not(:disabled) { background: #1d4ed8; }
+    button:active:not(:disabled) { transform: scale(0.96); }
+    button:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+    #btnReset { background: #475569; }
+    #btnReset:hover:not(:disabled) { background: #334155; }
+
+    .timeline { display: flex; flex-direction: column; gap: 4px; }
+    .timeline-info { display: flex; justify-content: space-between; font-size: 12px; color: #cbd5e1; }
+    input[type="range"] { width: 100%; accent-color: #38bdf8; cursor: pointer; }
+
+    .speed-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #94a3b8; }
+    select {
+      background: #1e293b; color: #f8fafc; border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px; padding: 3px 8px; font-size: 12px;
+    }
+
+    #leyenda {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px;
+      font-size: 11px; color: #cbd5e1;
+      border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;
+    }
+    .item { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .hint { font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div class="header">
+      <h1>SOKOBAN 3D ENGINE</h1>
+      <span class="badge" id="fileName">Sin archivo</span>
+    </div>
+
+    <label class="file-label" for="fileInput">
+      <span>📂 Cargar archivo <b>solucion.json</b></span>
+    </label>
+    <input type="file" id="fileInput" accept=".json" />
+
+    <div class="timeline">
+      <div class="timeline-info">
+        <span id="stepLabel">Paso: 0 / 0</span>
+        <span id="pctLabel">0%</span>
+      </div>
+      <input type="range" id="stepSlider" min="0" max="0" value="0" disabled />
+    </div>
+
+    <div class="controls">
+      <button id="btnReset" disabled title="Reiniciar (R)">↺ Reset</button>
+      <button id="btnPrev" disabled title="Paso anterior (←)">⏮ Ant.</button>
+      <button id="btnPlay" disabled title="Play/Pausa (Espacio)">▶ Play</button>
+      <button id="btnNext" disabled title="Siguiente paso (→)">Sig. ⏭</button>
+    </div>
+
+    <div class="speed-row">
+      <span>Velocidad de reproducción:</span>
+      <select id="speedSelect">
+        <option value="750">0.5x (Lenta)</option>
+        <option value="400" selected>1.0x (Normal)</option>
+        <option value="180">2.0x (Rápida)</option>
+      </select>
+    </div>
+
+    <div id="leyenda">
+      <div class="item"><span class="dot" style="background:#38bdf8"></span>Jugador</div>
+      <div class="item"><span class="dot" style="background:#10b981"></span>Placa Objetivo</div>
+      <div class="item"><span class="dot" style="background:#f59e0b"></span>Placa Temp.</div>
+      <div class="item"><span class="dot" style="background:#fbbf24"></span>Puerta Temp.</div>
+      <div class="item"><span class="dot" style="background:#d97706"></span>Caja Madera</div>
+      <div class="item"><span class="dot" style="background:#94a3b8"></span>Caja Metal</div>
+      <div class="item"><span class="dot" style="background:#b45309"></span>Barril</div>
+      <div class="item"><span class="dot" style="background:#eab308"></span>Cuerda</div>
+      <div class="item"><span class="dot" style="background:#f43f5e"></span>Globo</div>
+      <div class="item"><span class="dot" style="background:#a855f7"></span>Escalera</div>
+      <div class="item"><span class="dot" style="background:#ef4444"></span>Puerta Botón</div>
+      <div class="item"><span class="dot" style="background:#f97316"></span>Puerta Palanca</div>
+    </div>
+    <div class="hint">Ratón: Orbitar/Zoom · Teclas: ← → Espacio R</div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0b1120, 0.018);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(8, 9, 11);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+
+    const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x1e293b, 0.85);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(14, 24, 16);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.near = 1;
+    dirLight.shadow.camera.far = 60;
+    const d = 18;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.bias = -0.0005;
+    scene.add(dirLight);
+
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.45);
+    rimLight.position.set(-12, 8, -10);
+    scene.add(rimLight);
+
+    const worldGroup = new THREE.Group();
+    scene.add(worldGroup);
+
+    let estados = [];
+    let pasoActual = 0;
+    let timer = null;
+    let animProgress = 1;
+    const animatedMeshes = [];
+
+    const mat = {
+      Pared:          new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.75, metalness: 0.15 }),
+      SueloBase:      new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 }),
+      Placa:          new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.35, roughness: 0.3 }),
+      PlacaTemp:      new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0xd97706, emissiveIntensity: 0.4, roughness: 0.3 }),
+      PuertaBoton:    new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.4, metalness: 0.2 }),
+      PuertaPalanca:  new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.4, metalness: 0.2 }),
+      PuertaTemp:     new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.25, metalness: 0.3, transparent: true, opacity: 0.88 }),
+      Escalera:       new THREE.MeshStandardMaterial({ color: 0xa855f7, roughness: 0.45, metalness: 0.2 }),
+      Caja:           new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.65 }),
+      CajaMetal:      new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.85, roughness: 0.22 }),
+      Barril:         new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.7 }),
+      AroMetal:       new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.3 }),
+      Cuerda:         new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.75 }),
+      CuerdaNudo:     new THREE.MeshStandardMaterial({ color: 0xca8a04, roughness: 0.6 }),
+      Globo:          new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.15, metalness: 0.05 }),
+      Boton:          new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x0891b2, emissiveIntensity: 0.3 }),
+      PalancaCerrada: new THREE.MeshStandardMaterial({ color: 0xef4444 }),
+      PalancaAbierta: new THREE.MeshStandardMaterial({ color: 0x22c55e }),
+      Jugador:        new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.3, metalness: 0.25 }),
+      JugadorAnillo:  new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x38bdf8, emissiveIntensity: 0.85, roughness: 0.2 })
+    };
+
+    function crearBadgeNumero(texto) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128; canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.beginPath(); ctx.arc(64, 64, 48, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 8; ctx.stroke();
+      ctx.fillStyle = '#fef08a';
+      ctx.font = 'bold 54px system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(texto, 64, 68);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+      sprite.scale.set(0.65, 0.65, 1);
+      return sprite;
+    }
+
+    function addEdges(mesh, color = 0x0f172a, opacity = 0.35) {
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(mesh.geometry),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+      );
+      mesh.add(edges);
+    }
+
+    // Construye un tramo de cuerda trenzada con nudo en su extremo hacia una dirección 3D (dx, dyThree, dzThree)
+    function crearTensorCuerda(dx, dy, dz, longitud = 0.55) {
+      const tramo = new THREE.Group();
+      const dir = new THREE.Vector3(dx, dy, dz).normalize();
+
+      // Dos cabos paralelos trenzados
+      [-0.035, 0.035].forEach(offset => {
+        const cabo = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, longitud, 10), mat.Cuerda);
+        cabo.castShadow = true;
+        cabo.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        // Desplazamiento perpendicular
+        const perp = Math.abs(dir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        const side = new THREE.Vector3().crossVectors(dir, perp).normalize().multiplyScalar(offset);
+        cabo.position.copy(dir.clone().multiplyScalar(longitud / 2)).add(side);
+        tramo.add(cabo);
+      });
+
+      // Nudo / argolla de enganche en la punta
+      const nudo = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 12), mat.CuerdaNudo);
+      nudo.position.copy(dir.clone().multiplyScalar(longitud));
+      nudo.castShadow = true;
+      tramo.add(nudo);
+
+      return tramo;
+    }
+
+    // Construcción de mallas compuestas (En Haskell: (x, y, z) -> En Three.js: (x, z, y))
+    function crearMalla(celda, x, y, z, ocupadasSet = null) {
+      const tipo = celda.tipo;
+      const group = new THREE.Group();
+      group.position.set(x, z, y);
+
+      if (tipo === 'SueloBase') {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.18, 0.98), mat.SueloBase);
+        m.position.y = 0.41;
+        m.receiveShadow = true;
+        addEdges(m, 0x334155, 0.4);
+        group.add(m);
+      } else if (tipo === 'Placa' || tipo === 'PlacaTemporizada') {
+        const esTemp = tipo === 'PlacaTemporizada';
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.45, 0.1, 24), esTemp ? mat.PlacaTemp : mat.Placa);
+        base.position.y = -0.45;
+        base.receiveShadow = true;
+        group.add(base);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.3, 24), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = -0.395;
+        group.add(ring);
+      } else if (tipo === 'Escalera') {
+        const posteGeo = new THREE.BoxGeometry(0.12, 0.98, 0.12);
+        [-0.36, 0.36].forEach(dx => {
+          [-0.36, 0.36].forEach(dz => {
+            const p = new THREE.Mesh(posteGeo, mat.Escalera);
+            p.position.set(dx, 0, dz);
+            p.castShadow = true; p.receiveShadow = true;
+            group.add(p);
+          });
+        });
+        const peldanoGeo = new THREE.BoxGeometry(0.76, 0.08, 0.76);
+        [-0.32, 0, 0.32].forEach(dy => {
+          const s = new THREE.Mesh(peldanoGeo, mat.Escalera);
+          s.position.y = dy;
+          s.castShadow = true; s.receiveShadow = true;
+          group.add(s);
+        });
+      } else if (tipo === 'Barril') {
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.88, 20), mat.Barril);
+        body.castShadow = true; body.receiveShadow = true;
+        group.add(body);
+        [-0.25, 0.25].forEach(dy => {
+          const aro = new THREE.Mesh(new THREE.CylinderGeometry(0.395, 0.395, 0.08, 20), mat.AroMetal);
+          aro.position.y = dy;
+          group.add(aro);
+        });
+      } else if (tipo === 'Globo') {
+        const esfera = new THREE.Mesh(new THREE.SphereGeometry(0.4, 24, 24), mat.Globo);
+        esfera.position.y = 0.05;
+        esfera.castShadow = true;
+        group.add(esfera);
+        const hilo = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.35, 8), mat.Cuerda);
+        hilo.position.y = -0.32;
+        group.add(hilo);
+      } else if (tipo === 'Cuerda') {
+        // Nudo central de unión
+        const nudoCentral = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), mat.CuerdaNudo);
+        nudoCentral.castShadow = true;
+        group.add(nudoCentral);
+
+        // Detectar vecinos adyacentes en coordenadas Haskell (x, y, z)
+        const vecinos = [
+          { h: [1, 0, 0],  t: [1, 0, 0] },
+          { h: [-1, 0, 0], t: [-1, 0, 0] },
+          { h: [0, 1, 0],  t: [0, 0, 1] },
+          { h: [0, -1, 0], t: [0, 0, -1] },
+          { h: [0, 0, 1],  t: [0, 1, 0] },
+          { h: [0, 0, -1], t: [0, -1, 0] }
+        ];
+
+        let conectados = 0;
+        if (ocupadasSet) {
+          vecinos.forEach(v => {
+            const key = `${x + v.h[0]},${y + v.h[1]},${z + v.h[2]}`;
+            if (ocupadasSet.has(key)) {
+              group.add(crearTensorCuerda(v.t[0], v.t[1], v.t[2], 0.56));
+              conectados++;
+            }
+          });
+        }
+
+        // Si está suelta (sin vecinos), mostrarla extendida uniendo ambos lados en X por defecto
+        if (conectados === 0) {
+          group.add(crearTensorCuerda(-1, 0, 0, 0.44));
+          group.add(crearTensorCuerda(1, 0, 0, 0.44));
+        }
+      } else if (tipo === 'Jugador') {
+        // Diseño 100% simétrico en 360° (cápsula + doble anillo energético + núcleo superior)
+        const cuerpo = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.34, 12, 24), mat.Jugador);
+        cuerpo.position.y = -0.05;
+        cuerpo.castShadow = true;
+        group.add(cuerpo);
+
+        [-0.08, 0.14].forEach(ry => {
+          const anillo = new THREE.Mesh(new THREE.TorusGeometry(0.275, 0.028, 12, 32), mat.JugadorAnillo);
+          anillo.rotation.x = Math.PI / 2;
+          anillo.position.y = ry;
+          group.add(anillo);
+        });
+
+        const corona = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), mat.JugadorAnillo);
+        corona.position.y = 0.34;
+        group.add(corona);
+      } else if (tipo === 'Boton') {
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.16, 0.55), mat.SueloBase);
+        base.position.y = -0.42;
+        const pulsador = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.18, 16), mat.Boton);
+        pulsador.position.y = -0.28;
+        group.add(base, pulsador);
+      } else if (tipo.startsWith('Palanca')) {
+        const abierta = tipo === 'PalancaAbierta';
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.5), mat.SueloBase);
+        base.position.y = -0.42;
+        const mastil = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 10), mat.AroMetal);
+        mastil.position.y = -0.18;
+        mastil.rotation.z = abierta ? -0.45 : 0.45;
+        const pomo = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 12), abierta ? mat.PalancaAbierta : mat.PalancaCerrada);
+        pomo.position.set(abierta ? 0.12 : -0.12, 0.06, 0);
+        group.add(base, mastil, pomo);
+      } else if (tipo === 'PuertaTemporizada') {
+        if (!celda.abierta) {
+          const bloque = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.94, 0.94), mat.PuertaTemp);
+          bloque.castShadow = true; bloque.receiveShadow = true;
+          addEdges(bloque, 0xfef08a, 0.7);
+          group.add(bloque);
+        } else {
+          const marco = new THREE.LineSegments(
+            new THREE.EdgesGeometry(new THREE.BoxGeometry(0.96, 0.96, 0.96)),
+            new THREE.LineBasicMaterial({ color: 0xfbbf24 })
+          );
+          group.add(marco);
+          if (celda.tiempo > 0) {
+            const badge = crearBadgeNumero(String(celda.tiempo));
+            badge.position.y = 0.65;
+            group.add(badge);
+          }
+        }
+      } else {
+        const size = (tipo === 'Caja' || tipo === 'CajaMetal') ? 0.88 : 0.96;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), mat[tipo] || mat.Pared);
+        m.castShadow = true; m.receiveShadow = true;
+        addEdges(m, tipo === 'CajaMetal' ? 0xe2e8f0 : 0x0f172a, 0.45);
+        group.add(m);
+      }
+
+      return group;
+    }
+
+    function renderizarPaso(idx, prevIdx = null) {
+      if (!estados.length) return;
+      pasoActual = Math.max(0, Math.min(idx, estados.length - 1));
+      const est = estados[pasoActual];
+      const prevEst = (prevIdx !== null && estados[prevIdx]) ? estados[prevIdx] : est;
+
+      while (worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
+      animatedMeshes.length = 0;
+
+      // Conjunto de posiciones ocupadas por objetos o jugadores para orientar las cuerdas
+      const ocupadasSet = new Set();
+      est.objetos.forEach(o => ocupadasSet.add(`${o.pos[0]},${o.pos[1]},${o.pos[2]}`));
+      est.jugadores.forEach(j => ocupadasSet.add(`${j[0]},${j[1]},${j[2]}`));
+
+      const baseVistas = new Set();
+      est.mapa.forEach((celda) => {
+        const [x, y, z] = celda.pos;
+        if (z === 0 && !baseVistas.has(`${x},${y}`)) {
+          baseVistas.add(`${x},${y}`);
+          worldGroup.add(crearMalla({ tipo: 'SueloBase' }, x, y, -1));
+        }
+        if (celda.tipo !== 'Aire' && celda.tipo !== 'Suelo') {
+          worldGroup.add(crearMalla(celda, x, y, z));
+        }
+      });
+
+      est.objetos.forEach((obj, i) => {
+        const [x, y, z] = obj.pos;
+        const mesh = crearMalla(obj, x, y, z, ocupadasSet);
+        const prevObj = prevEst.objetos[i];
+        if (prevObj && prevObj.tipo === obj.tipo) {
+          const [px, py, pz] = prevObj.pos;
+          mesh.userData.from = new THREE.Vector3(px, pz, py);
+          mesh.userData.to = new THREE.Vector3(x, z, y);
+          mesh.position.copy(mesh.userData.from);
+          animatedMeshes.push(mesh);
+        }
+        worldGroup.add(mesh);
+      });
+
+      est.jugadores.forEach(([x, y, z], i) => {
+        const mesh = crearMalla({ tipo: 'Jugador' }, x, y, z);
+        const prevJ = prevEst.jugadores[i];
+        if (prevJ) {
+          const [px, py, pz] = prevJ;
+          mesh.userData.from = new THREE.Vector3(px, pz, py);
+          mesh.userData.to = new THREE.Vector3(x, z, y);
+          mesh.position.copy(mesh.userData.from);
+          animatedMeshes.push(mesh);
+        }
+        worldGroup.add(mesh);
+      });
+
+      animProgress = 0;
+
+      const total = estados.length;
+      document.getElementById('stepLabel').textContent = `Paso: ${pasoActual + 1} / ${total}`;
+      document.getElementById('pctLabel').textContent = `${Math.round(((pasoActual + 1) / total) * 100)}%`;
+      const slider = document.getElementById('stepSlider');
+      slider.max = total - 1;
+      slider.value = pasoActual;
+    }
+
+    function centrarCamara(est) {
+      const xs = est.mapa.map(c => c.pos[0]);
+      const ys = est.mapa.map(c => c.pos[1]);
+      const zs = est.mapa.map(c => c.pos[2]);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      controls.target.set(cx, cz, cy);
+      camera.position.set(cx + 6.5, cz + 6.5, cy + 8.5);
+    }
+
+    function detenerReproduccion() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById('btnPlay').textContent = '▶ Play';
+      }
+    }
+
+    function iniciarReproduccion() {
+      if (pasoActual >= estados.length - 1) renderizarPaso(0);
+      document.getElementById('btnPlay').textContent = '⏸ Pausa';
+      const delay = Number(document.getElementById('speedSelect').value);
+      timer = setInterval(() => {
+        if (pasoActual < estados.length - 1) renderizarPaso(pasoActual + 1, pasoActual);
+        else detenerReproduccion();
+      }, delay);
+    }
+
+    function reiniciarVisor() {
+      if (!estados.length) return;
+      detenerReproduccion();
+      centrarCamara(estados[0]);
+      renderizarPaso(0);
+    }
+
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      document.getElementById('fileName').textContent = file.name;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        detenerReproduccion();
+        estados = JSON.parse(ev.target.result);
+        ['btnReset', 'btnPrev', 'btnPlay', 'btnNext', 'stepSlider'].forEach(id => document.getElementById(id).disabled = false);
+        centrarCamara(estados[0]);
+        renderizarPaso(0);
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById('stepSlider').addEventListener('input', (e) => {
+      detenerReproduccion();
+      renderizarPaso(Number(e.target.value));
+    });
+
+    document.getElementById('speedSelect').addEventListener('change', () => {
+      if (timer) { detenerReproduccion(); iniciarReproduccion(); }
+    });
+
+    document.getElementById('btnReset').onclick = reiniciarVisor;
+    document.getElementById('btnPrev').onclick = () => { detenerReproduccion(); renderizarPaso(pasoActual - 1, pasoActual); };
+    document.getElementById('btnNext').onclick = () => { detenerReproduccion(); renderizarPaso(pasoActual + 1, pasoActual); };
+    document.getElementById('btnPlay').onclick = () => timer ? detenerReproduccion() : iniciarReproduccion();
+
+    window.addEventListener('keydown', (e) => {
+      if (!estados.length) return;
+      if (e.key === 'ArrowRight') { detenerReproduccion(); renderizarPaso(pasoActual + 1, pasoActual); }
+      if (e.key === 'ArrowLeft')  { detenerReproduccion(); renderizarPaso(pasoActual - 1, pasoActual); }
+      if (e.key === ' ')          { e.preventDefault(); timer ? detenerReproduccion() : iniciarReproduccion(); }
+      if (e.key === 'r' || e.key === 'R') reiniciarVisor();
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (animProgress < 1) {
+        animProgress = Math.min(1, animProgress + 0.14);
+        const ease = 1 - Math.pow(1 - animProgress, 3);
+        animatedMeshes.forEach(m => m.position.lerpVectors(m.userData.from, m.userData.to, ease));
+      }
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

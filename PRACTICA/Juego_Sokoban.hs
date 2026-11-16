@@ -273,7 +273,14 @@ tirar objetos posicion direccion =
     foldl (flip (desplazarObjeto direccion)) objetos
         (cadenaTirar objetos posicion direccion)
 
--- Sube por una columna de escaleras adyacente en el eje Z hasta colocarse encima si el camino vertical está despejado.
+-- Comprueba si una posición tiene una escalera adyacente en el plano horizontal (X o Y).
+estaAgarradoAEscalera :: M.Map Posicion Casilla -> Posicion -> Bool
+estaAgarradoAEscalera mapaJuego pos =
+    any (\dir -> M.findWithDefault Pared (sumaDireccion pos dir) mapaJuego == Escalera)
+        [Derecha, Izquierda, Adelante, Atras]
+
+-- Sube un único bloque por turno: si la escalera continúa arriba, sube 1 en Z junto a ella;
+-- si es el último tramo, corona colocándose encima.
 subirPorEscalera :: [Jugador] -> M.Map Posicion Casilla -> M.Map Posicion Objeto -> Posicion -> Posicion -> Maybe Posicion
 subirPorEscalera jugadores mapaJuego objetos posJugador posEscalera =
     let arribaJugador  = sumaDireccion posJugador Arriba
@@ -281,17 +288,20 @@ subirPorEscalera jugadores mapaJuego objetos posJugador posEscalera =
     in if not (esLibre arribaJugador)
        then Nothing
        else case M.findWithDefault Pared arribaEscalera mapaJuego of
-           Escalera -> subirPorEscalera jugadores mapaJuego objetos arribaJugador arribaEscalera
+           Escalera -> Just arribaJugador
            _        -> if esLibre arribaEscalera then Just arribaEscalera else Nothing
     where
         esLibre p = esPisable (M.findWithDefault Pared p mapaJuego)
                     && not (M.member p objetos)
                     && p `notElem` jugadores
 
--- Comprueba si una posición tiene apoyo sólido debajo (en z - 1).
+-- Comprueba si una posición tiene apoyo sólido debajo (en z - 1) o si es un jugador agarrado a una escalera.
 tieneApoyo :: [Jugador] -> M.Map Posicion Casilla -> M.Map Posicion Objeto -> Posicion -> Bool
 tieneApoyo jugadores mapaJuego objetos pos =
-    esSueloSolido casillaDebajo || M.member debajo objetos || debajo `elem` jugadores
+    esSueloSolido casillaDebajo
+    || M.member debajo objetos
+    || debajo `elem` jugadores
+    || (pos `elem` jugadores && estaAgarradoAEscalera mapaJuego pos)
     where
         debajo = sumaDireccion pos Abajo
         casillaDebajo = M.findWithDefault Pared debajo mapaJuego
@@ -370,10 +380,15 @@ accionAvanzar (jugadores, mapaJuego, objetos) posJugador direccion
     -- El jugador debe existir en el estado.
     | posJugador `notElem` jugadores =
         Nothing
-    -- El movimiento vertical se realiza mediante escaleras.
+    -- Si está agarrado a una escalera, puede bajar 1 peldaño en Z con Abajo.
+    | direccion == Abajo && estaAgarradoAEscalera mapaJuego posJugador =
+        if esPisable (casilla posSiguiente) && not (M.member posSiguiente objetos) && posSiguiente `notElem` jugadores
+        then Just (moverJugador jugadores posJugador posSiguiente, mapaJuego, objetos)
+        else Nothing
+    -- El resto de movimientos verticales directos (Arriba, o Abajo sin escalera) no están permitidos.
     | esDireccionVertical direccion =
         Nothing
-    -- Si hay una escalera delante, se intenta subir por ella.
+    -- Si hay una escalera delante, se intenta subir 1 peldaño por ella.
     | casilla posSiguiente == Escalera =
         case subirPorEscalera jugadores mapaJuego objetos posJugador posSiguiente of
             Just destinoSubida ->
@@ -597,3 +612,54 @@ sinSolucion =
     [
 
     ]
+
+
+
+--------------------------------------------------
+-- Exportación de solución a JSON para visor.html
+--------------------------------------------------
+
+casillaJson :: (Posicion, Casilla) -> String
+casillaJson ((x, y, z), cas) =
+    "{\"pos\":[" ++ show x ++ "," ++ show y ++ "," ++ show z ++ "]," ++ extra cas ++ "}"
+    where
+        extra (PuertaTemporizada abierta tiempo duracion) =
+            "\"tipo\":\"PuertaTemporizada\",\"abierta\":" ++ (if abierta then "true" else "false")
+            ++ ",\"tiempo\":" ++ show tiempo ++ ",\"duracion\":" ++ show duracion
+        extra (PlacaActivadoraTemporizada _) =
+            "\"tipo\":\"PlacaTemporizada\""
+        extra c =
+            "\"tipo\":\"" ++ show c ++ "\""
+
+objetoJson :: (Posicion, Objeto) -> String
+objetoJson ((x, y, z), obj) =
+    "{\"pos\":[" ++ show x ++ "," ++ show y ++ "," ++ show z ++ "],\"tipo\":\"" ++ nombre obj ++ "\"}"
+    where
+        nombre Caja          = "Caja"
+        nombre Barril        = "Barril"
+        nombre Cuerda        = "Cuerda"
+        nombre CajaMetal     = "CajaMetal"
+        nombre Globo         = "Globo"
+        nombre (Boton _)     = "Boton"
+        nombre (Palanca _ b) = if b then "PalancaAbierta" else "PalancaCerrada"
+
+estadoAJson :: Sokoban -> String
+estadoAJson (Sok (jugadores, mapaJuego, objetos)) =
+    "{"
+    ++ "\"jugadores\":[" ++ intercalar "," (map posJson jugadores) ++ "],"
+    ++ "\"mapa\":[" ++ intercalar "," (map casillaJson (M.toList mapaJuego)) ++ "],"
+    ++ "\"objetos\":[" ++ intercalar "," (map objetoJson (M.toList objetos)) ++ "]"
+    ++ "}"
+    where
+        posJson (x, y, z) = "[" ++ show x ++ "," ++ show y ++ "," ++ show z ++ "]"
+        intercalar _ []     = ""
+        intercalar _ [x]    = x
+        intercalar s (x:xs) = x ++ s ++ intercalar s xs
+
+guardarSolucion :: FilePath -> [Sokoban] -> IO ()
+guardarSolucion ruta pasos =
+    writeFile ruta ("[\n" ++ unlines' (map estadoAJson pasos) ++ "]\n")
+    where
+        unlines' []     = ""
+        unlines' [x]    = "  " ++ x
+        unlines' (x:xs) = "  " ++ x ++ ",\n" ++ unlines' xs
