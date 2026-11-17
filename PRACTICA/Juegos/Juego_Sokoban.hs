@@ -13,6 +13,7 @@ import qualified Data.Map as M
 
 data Casilla
     = Pared
+    | Limite
     | Placa
     | Aire
     | PuertaBoton
@@ -42,8 +43,9 @@ data Direccion = Arriba | Abajo | Izquierda | Derecha | Adelante | Atras
     deriving (Eq, Ord, Enum, Bounded, Show)
 
 type Posicion = (Int, Int, Int)
-
 type Jugador = Posicion
+type MapaCasillas = M.Map Posicion Casilla
+type MapaObjetos = M.Map Posicion Objeto
 
 -- Las acciones las hace el jugador, las reacciones los objetos
 data Accion
@@ -59,9 +61,9 @@ type Estado =
         -- Lista de posiciones de los jugadores
         [Jugador],
         -- Diccionario que describe el mapa del juego
-        M.Map Posicion Casilla,
+        MapaCasillas,
         -- Diccionario que describe la posición de los objetos
-        M.Map Posicion Objeto
+        MapaObjetos
     )
 
 -- Juego
@@ -82,15 +84,19 @@ instance Jugable Sokoban where
             ocupadas     = jugadores ++ M.keys objetos
             estaPisada p = p `elem` ocupadas
 
-    opciones (Sok estado@(jugadores, _, _)) =
-        [ Sok nuevaPosicion
-        | jugador <- jugadores
-        , direccion <- [minBound .. maxBound]
-        , accion <- [AccionAvanzar jugador direccion,
-                    AccionMoverObjeto jugador direccion,
-                    AccionInteractuarObjeto jugador direccion]
-        , Just nuevaPosicion <- [ejecutarAccion estado accion]
-        ]
+    opciones (Sok estado@(jugadores, _, _))
+            | estadoEstable /= estado = [Sok estadoEstable]
+            | otherwise =
+                [ Sok nuevaPosicion
+                | jugador <- jugadores
+                , direccion <- [minBound .. maxBound]
+                , accion <- [AccionAvanzar jugador direccion,
+                            AccionMoverObjeto jugador direccion,
+                            AccionInteractuarObjeto jugador direccion]
+                , Just nuevaPosicion <- [ejecutarAccion estado accion]
+                ]
+            where
+                estadoEstable = aplicarGravedadPaso estado
 
 --------------------------------------------------
 -- Funciones Auxiliares simples
@@ -126,6 +132,7 @@ esDireccionHorizontal = not . esDireccionVertical
 -- Verifica si una casilla es pisable/atravesable
 esPisable :: Casilla -> Bool
 esPisable Pared                          = False
+esPisable Limite                         = False
 esPisable PuertaBoton                    = False
 esPisable PuertaPalanca                  = False
 esPisable Escalera                       = False
@@ -135,15 +142,12 @@ esPisable _                              = True
 -- Verifica si una casilla actúa como suelo sólido que soporta peso encima
 esSueloSolido :: Casilla -> Bool
 esSueloSolido Pared                          = True
+esSueloSolido Limite                         = True
 esSueloSolido PuertaBoton                    = True
 esSueloSolido PuertaPalanca                  = True
 esSueloSolido Escalera                       = True
 esSueloSolido (PuertaTemporizada abierta _ _) = not abierta
 esSueloSolido _                              = False
-
---------------------------------------------------
--- Metodos auxiliares complejos
---------------------------------------------------
 
 -- Un objeto puede ser empujado si esta función devuelve True.
 esEmpujable :: Objeto -> Bool
@@ -196,6 +200,10 @@ tieneGravedad Cuerda    = True
 tieneGravedad CajaMetal = True
 tieneGravedad _         = False
 
+--------------------------------------------------
+-- Metodos auxiliares complejos
+--------------------------------------------------
+
 -- Una cadena es válida si todos sus objetos son empujables,
 -- y no contiene ningún objeto que solo pueda moverse solo dentro de una cadena de varios elementos.
 cadenaEmpujable :: [Objeto] -> Bool
@@ -205,7 +213,7 @@ cadenaEmpujable objetos =
     (length objetos == 1 || not (any soloSeMueveSola objetos))
 
 -- Obtiene los objetos consecutivos que hay delante del jugador.
-cadenaObjetos :: M.Map Posicion Objeto -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
+cadenaObjetos :: MapaObjetos -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
 cadenaObjetos objetos posicion direccion =
     case M.lookup posicion objetos of
         Nothing -> []
@@ -214,7 +222,7 @@ cadenaObjetos objetos posicion direccion =
 
 -- Construye la cadena de objetos que se arrastran al tirar:
 -- el primer objeto debe ser tirable y solo se encadenan los siguientes si hay una cuerda adhesiva uniendo ambos.
-cadenaTirar :: M.Map Posicion Objeto -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
+cadenaTirar :: MapaObjetos -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
 cadenaTirar objetos posInicial dirTirar =
     case M.lookup posInicial objetos of
         Nothing -> []
@@ -232,7 +240,7 @@ cadenaTirar objetos posInicial dirTirar =
                     | otherwise -> []
 
 -- Comprueba si una cadena de objetos puede desplazarse una casilla en 3D.
-empujePosible :: [Jugador] -> M.Map Posicion Casilla -> M.Map Posicion Objeto -> Posicion -> Direccion -> Bool
+empujePosible :: [Jugador] -> MapaCasillas -> MapaObjetos -> Posicion -> Direccion -> Bool
 empujePosible jugadores mapaJuego objetos posicion direccion =
     not (null cadena) &&
     cadenaEmpujable objetosCadena &&
@@ -244,16 +252,16 @@ empujePosible jugadores mapaJuego objetos posicion direccion =
         cadena = cadenaObjetos objetos posicion direccion
         objetosCadena = map snd cadena
         destino = sumaDireccion (fst (last cadena)) direccion
-        casilla p = M.findWithDefault Pared p mapaJuego
+        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Desplaza todos los objetos de una cadena, empezando por el último.
-empujar :: M.Map Posicion Objeto -> Posicion -> Direccion -> M.Map Posicion Objeto
+empujar :: MapaObjetos -> Posicion -> Direccion -> MapaObjetos
 empujar objetos posicion direccion =
     foldr (desplazarObjeto direccion) objetos
         (cadenaObjetos objetos posicion direccion)
 
 -- Comprueba si una cadena de objetos puede ser tirada en una dirección en 3D.
-tirarPosible :: M.Map Posicion Casilla -> M.Map Posicion Objeto -> Posicion -> Direccion -> Bool
+tirarPosible :: MapaCasillas -> MapaObjetos -> Posicion -> Direccion -> Bool
 tirarPosible mapaJuego objetos posicion direccion =
     not (null cadena) &&
     (esDireccionHorizontal direccion && all esMovibleHorizontalmente objetosCadena ||
@@ -265,52 +273,54 @@ tirarPosible mapaJuego objetos posicion direccion =
         cadena = cadenaTirar objetos posicion direccion
         objetosCadena = map snd cadena
         destino = sumaDireccion posicion direccion
-        casilla p = M.findWithDefault Pared p mapaJuego
+        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Desplaza hacia el jugador todos los objetos enganchados en la cadena de tirón, empezando por el más cercano.
-tirar :: M.Map Posicion Objeto -> Posicion -> Direccion -> M.Map Posicion Objeto
+tirar :: MapaObjetos -> Posicion -> Direccion -> MapaObjetos
 tirar objetos posicion direccion =
     foldl (flip (desplazarObjeto direccion)) objetos
         (cadenaTirar objetos posicion direccion)
 
 -- Comprueba si una posición tiene una escalera adyacente en el plano horizontal (X o Y).
-estaAgarradoAEscalera :: M.Map Posicion Casilla -> Posicion -> Bool
+estaAgarradoAEscalera :: MapaCasillas -> Posicion -> Bool
 estaAgarradoAEscalera mapaJuego pos =
-    any (\dir -> M.findWithDefault Pared (sumaDireccion pos dir) mapaJuego == Escalera)
+    any (\dir -> M.findWithDefault Limite (sumaDireccion pos dir) mapaJuego == Escalera)
         [Derecha, Izquierda, Adelante, Atras]
 
 -- Sube un único bloque por turno: si la escalera continúa arriba, sube 1 en Z junto a ella;
 -- si es el último tramo, corona colocándose encima.
-subirPorEscalera :: [Jugador] -> M.Map Posicion Casilla -> M.Map Posicion Objeto -> Posicion -> Posicion -> Maybe Posicion
+subirPorEscalera :: [Jugador] -> MapaCasillas -> MapaObjetos -> Posicion -> Posicion -> Maybe Posicion
 subirPorEscalera jugadores mapaJuego objetos posJugador posEscalera =
     let arribaJugador  = sumaDireccion posJugador Arriba
         arribaEscalera = sumaDireccion posEscalera Arriba
     in if not (esLibre arribaJugador)
        then Nothing
-       else case M.findWithDefault Pared arribaEscalera mapaJuego of
+       else case M.findWithDefault Limite arribaEscalera mapaJuego of
            Escalera -> Just arribaJugador
            _        -> if esLibre arribaEscalera then Just arribaEscalera else Nothing
     where
-        esLibre p = esPisable (M.findWithDefault Pared p mapaJuego)
+        esLibre p = esPisable (M.findWithDefault Limite p mapaJuego)
                     && not (M.member p objetos)
                     && p `notElem` jugadores
 
--- Comprueba si una posición tiene apoyo sólido debajo (en z - 1) o si es un jugador agarrado a una escalera.
-tieneApoyo :: [Jugador] -> M.Map Posicion Casilla -> M.Map Posicion Objeto -> Posicion -> Bool
-tieneApoyo jugadores mapaJuego objetos pos =
-    esSueloSolido casillaDebajo
-    || M.member debajo objetos
-    || debajo `elem` jugadores
-    || (pos `elem` jugadores && estaAgarradoAEscalera mapaJuego pos)
+-- Comprueba si una posición tiene apoyo real hasta tocar suelo sólido, escalera o un objeto sin gravedad (ej. Globo)
+tieneApoyo :: [Jugador] -> MapaCasillas -> MapaObjetos -> Posicion -> Bool
+tieneApoyo jugadores mapaJuego objetos pos
+    | esSueloSolido casillaDebajo = True
+    | pos `elem` jugadores && estaAgarradoAEscalera mapaJuego pos = True
+    | Just objDebajo <- M.lookup debajo objetos =
+        not (tieneGravedad objDebajo) || tieneApoyo jugadores mapaJuego objetos debajo
+    | debajo `elem` jugadores =
+        tieneApoyo jugadores mapaJuego objetos debajo
+    | otherwise = False
     where
         debajo = sumaDireccion pos Abajo
-        casillaDebajo = M.findWithDefault Pared debajo mapaJuego
+        casillaDebajo = M.findWithDefault Limite debajo mapaJuego
 
--- Aplica la gravedad (en -Z) de forma iterativa hasta que todos los jugadores y objetos con gravedad estén apoyados.
-aplicarGravedad :: Estado -> Estado
-aplicarGravedad estado@(jugadores, mapaJuego, objetos)
-    | jugadores == nuevosJugadores && objetos == nuevosObjetos = estado
-    | otherwise = aplicarGravedad (nuevosJugadores, mapaJuego, nuevosObjetos)
+-- Aplica un único paso de gravedad (1 casilla en -Z) a los jugadores y objetos sin apoyo.
+aplicarGravedadPaso :: Estado -> Estado
+aplicarGravedadPaso estado@(jugadores, mapaJuego, objetos) =
+    (nuevosJugadores, mapaJuego, nuevosObjetos)
     where
         caerJugador j
             | tieneApoyo jugadores mapaJuego objetos j = j
@@ -358,15 +368,17 @@ actualizarPuertas (jugadores, mapaJuego, objetos) =
                          , puerta == posicion
                          ]
 
--- Reúne todas las actualizaciones al final de cada turno (gravedad -> temporizadores -> gravedad).
+-- Actualiza las puertas temporizadas al terminar la acción del jugador;
+-- la caída paso a paso la gestiona `opciones` en los estados transitorios siguientes.
 actualizacionFinal :: Estado -> Estado
-actualizacionFinal = aplicarGravedad . actualizarPuertas . aplicarGravedad
+actualizacionFinal = actualizarPuertas
 
 -- Ejecuta una acción y aplica gravedad y actualización de puertas temporizadas.
 ejecutarAccion :: Estado -> Accion -> Maybe Estado
 ejecutarAccion estado accion =
     fmap actualizacionFinal (ejecutarAccionSinGravedad estado accion)
 
+-- Ejecuta una acción sin aplicar gravedad ni actualización de puertas temporizadas.
 ejecutarAccionSinGravedad :: Estado -> Accion -> Maybe Estado
 ejecutarAccionSinGravedad estado (AccionAvanzar posJugador direccion) =
     accionAvanzar estado posJugador direccion
@@ -418,7 +430,7 @@ accionAvanzar (jugadores, mapaJuego, objetos) posJugador direccion
         )
     where
         posSiguiente = sumaDireccion posJugador direccion
-        casilla p = M.findWithDefault Pared p mapaJuego
+        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Mueve un objeto empujándolo o tirando de él.
 accionMoverObjeto :: Estado -> Jugador -> Direccion -> Maybe Estado
@@ -454,7 +466,7 @@ accionMoverObjeto (jugadores, mapaJuego, objetos) posJugador direccion
     where
         posSiguiente = sumaDireccion posJugador direccion
         posAnterior = sumaDireccion posJugador (direccionContraria direccion)
-        casilla p = M.findWithDefault Pared p mapaJuego
+        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Interactúa con un botón o una palanca situados delante del jugador.
 accionInteractuarObjeto :: Estado -> Jugador -> Direccion -> Maybe Estado
@@ -510,13 +522,13 @@ moverJugador :: [Jugador] -> Jugador -> Jugador -> [Jugador]
 moverJugador jugadores origen destino =
     map (desplazar origen destino) jugadores
 
-moverObjeto :: M.Map Posicion Objeto -> Posicion -> Posicion -> M.Map Posicion Objeto
+moverObjeto :: MapaObjetos -> Posicion -> Posicion -> MapaObjetos
 moverObjeto objetos origen destino =
     case M.lookup origen objetos of
         Nothing -> objetos
         Just objeto -> M.insert destino objeto (M.delete origen objetos)
 
-desplazarObjeto :: Direccion -> (Posicion, Objeto) -> M.Map Posicion Objeto -> M.Map Posicion Objeto
+desplazarObjeto :: Direccion -> (Posicion, Objeto) -> MapaObjetos -> MapaObjetos
 desplazarObjeto direccion (posicionObjeto, objeto) objetos =
     moverObjeto objetos posicionObjeto
         (sumaDireccion posicionObjeto direccion)
@@ -538,7 +550,7 @@ direccionContraria Atras     = Adelante
 --------------------------------------------------
 
 -- Genera un volumen 3D de aire (Aire) de dimensiones ancho (X) x fondo (Y) x alto (Z)
-mapa :: Int -> Int -> Int -> M.Map Posicion Casilla
+mapa :: Int -> Int -> Int -> MapaCasillas
 mapa ancho fondo alto =
     M.fromList [((x, y, z), Aire) | x <- [0..ancho - 1], y <- [0..fondo - 1], z <- [0..alto - 1]]
 
@@ -548,7 +560,7 @@ conSolucion =
     [
     Sok ( [(0, 0, 0)]
         , M.unions
-            [ -- PLANTA BAJA (z = 0): sala de CajaMetal, Palanca, placa/puerta temporizada, pasillo al Globo y pozo final
+            [
               M.fromList [ ((3, 0, 0), Placa)                                  -- 1. Objetivo CajaMetal
                          , ((8, 0, 0), Placa)                                  -- 6. Objetivo Barril que cae desde z=4
                          , ((5, 2, 0), PuertaPalanca)                          -- Puerta controlada por Palanca (3,1,0)
@@ -562,27 +574,23 @@ conSolucion =
                          , ((8, 2, 0), Pared), ((9, 2, 0), Pared)
                          ]
 
-              -- ENTREPLANTA 1 (z = 1): segundo bloque de Escalera 1 y soporte de Planta 1
             , M.fromList [ ((6, 1, 1), Escalera)
                          , ((1, 1, 1), Pared), ((2, 1, 1), Pared), ((3, 1, 1), Pared), ((4, 1, 1), Pared), ((5, 1, 1), Pared)
                          , ((5, 0, 1), Pared), ((6, 0, 1), Pared), ((7, 0, 1), Pared), ((7, 1, 1), Pared)
                          ]
 
-              -- PLANTA 1 (z = 2): pasillo de arrastre con Cuerda, Boton y base de Escalera 2
             , M.fromList [ ((2, 1, 2), Placa), ((3, 1, 2), Placa), ((4, 1, 2), Placa) -- 2, 3, 4. Cadena Caja-Cuerda-Barril
                          , ((6, 0, 2), Escalera)      -- Base Escalera 2
                          , ((0, 1, 2), Pared), ((8, 1, 2), Pared)
                          , ((4, 0, 2), Pared), ((8, 0, 2), Pared)
                          ]
 
-              -- ENTREPLANTA 2 (z = 3): Escalera 2, pasarela de Azotea, hueco para Globo (7,2,2) y Escalera final
             , M.fromList [ ((6, 0, 3), Escalera)
                          , ((8, 2, 3), Escalera)      -- Escalera final desde el Globo hasta z=4
                          , ((6, 1, 3), Pared), ((6, 2, 3), Pared)
                          , ((8, 1, 3), Pared), ((8, 0, 3), Pared)
                          ]
 
-              -- AZOTEA (z = 4): pasarela hacia el puente de Globo, PuertaBoton y pozo de caída
             , M.fromList [ ((8, 2, 4), PuertaBoton)   -- Puerta controlada por Boton (5,0,2)
                          , ((8, 1, 4), Placa)         -- 5. Objetivo final del jugador
                          , ((5, 0, 4), Pared), ((5, 1, 4), Pared), ((5, 2, 4), Pared)
@@ -590,7 +598,6 @@ conSolucion =
                          , ((9, 1, 4), Pared), ((9, 2, 4), Pared)
                          ]
 
-              -- Volumen total 10 x 3 x 6 de aire (Aire)
             , mapa 10 3 6
             ]
         , M.fromList
@@ -603,70 +610,13 @@ conSolucion =
             , ((5, 0, 2), Boton (8, 2, 4))
             , ((8, 0, 4), Barril)
             ]
-        )
-    -- El jugador solo tiene que avanzar hasta la placa.
-    Sok ([(0, 0, 0)], M.fromList [((0, 0, 0), Aire), ((1, 0, 0), Placa)], M.empty),
-
-    -- La caja puede empujarse una casilla hasta la placa.
-    Sok ([(0, 0, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((2, 0, 0), Placa)],
-        M.fromList [((1, 0, 0), Caja)]),
-
-    -- Las tres cajas se pueden empujar en fila recta hasta la placa.
-    Sok ([(0, 0, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((2, 0, 0), Aire),
-            ((3, 0, 0), Aire), ((4, 0, 0), Placa)],
-        M.fromList [((1, 0, 0), Caja), ((2, 0, 0), Caja), ((3, 0, 0), Caja)]),
-
-    -- La caja de metal puede empujarse hasta la placa porque no tiene otro objeto delante.
-    Sok ([(0, 0, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((2, 0, 0), Placa)],
-        M.fromList [((1, 0, 0), CajaMetal)]),
-
-    -- El jugador activa el botón y después llega a la placa por la puerta.
-    Sok ([(0, 0, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((0, 1, 0), PuertaBoton),
-            ((0, 2, 0), Placa)],
-        M.fromList [((1, 0, 0), Boton (0, 1, 0))]),
-
-    -- El jugador activa la palanca y después llega a la placa por la puerta.
-    Sok ([(0, 0, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((0, 1, 0), PuertaPalanca),
-            ((0, 2, 0), Placa)],
-        M.fromList [((1, 0, 0), Palanca (0, 1, 0) False)]),
-
-    -- El barril puede empujarse hasta la placa.
-    Sok ([(0, 0, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((2, 0, 0), Placa)],
-        M.fromList [((1, 0, 0), Barril)]),
-
-    -- Los cuatro barriles se pueden tirar desde la segunda columna hasta la primera placa.
-    Sok ([(1, 1, 0)],
-        M.union
-        (M.fromList [((1, 0, 0), Placa), ((1, 1, 0), Placa)])
-        (mapa 2 6 1),
-        M.fromList [((2, 1, 0), Barril), ((3, 1, 0), Barril),
-                    ((4, 1, 0), Barril), ((5, 1, 0), Barril)]),
-
-    -- Las cuatro cuerdas se pueden tirar desde la segunda columna hasta la primera placa.
-    Sok ([(1, 1, 0)],
-        M.union
-        (M.fromList [((1, 0, 0), Placa), ((1, 1, 0), Placa)])
-        (mapa 2 6 1),
-        M.fromList [((2, 1, 0), Cuerda), ((3, 1, 0), Cuerda),
-                    ((4, 1, 0), Cuerda), ((5, 1, 0), Cuerda)]),
+        ),
 
     -- La fila de barril, cuerda, barril y cuerda se puede tirar desde la segunda columna.
     Sok ([(1, 1, 0)],
         M.union
         (M.fromList [((1, 0, 0), Placa), ((1, 1, 0), Placa)])
-        (mapa 2 6 1),
+        (mapa 6 2 1),
         M.fromList [((2, 1, 0), Barril), ((3, 1, 0), Cuerda),
                     ((4, 1, 0), Barril), ((5, 1, 0), Cuerda)]),
 
@@ -675,27 +625,160 @@ conSolucion =
         M.union
         (M.fromList [((0, 0, 0), Placa), ((3, 0, 0), Placa),
                         ((4, 0, 0), Placa), ((7, 0, 0), Placa)])
-        (mapa 1 8 1),
+        (mapa 8 1 1),
         M.fromList [((2, 0, 0), Caja), ((5, 0, 0), Caja)]),
 
-    -- Ambos jugadores activan la puerta y el jugador superior cruza hasta la única placa final.
-    Sok ([(0, 0, 0), (0, 1, 0)],
-        M.fromList
-        [((0, 0, 0), Aire), ((1, 0, 0), Aire),
-            ((2, 0, 0), PlacaActivadoraTemporizada (6, 0, 0)),
-            ((3, 0, 0), Aire), ((4, 0, 0), Aire), ((5, 0, 0), Aire),
-            ((6, 0, 0), PuertaTemporizada False (-1) 6),
-            ((7, 0, 0), Aire), ((8, 0, 0), Placa),
-            ((0, 1, 0), Aire), ((1, 1, 0), Aire),
-            ((2, 1, 0), PlacaActivadoraTemporizada (6, 0, 0))],
-        M.empty)
+    Sok ( [(4, 3, 0)]
+        , M.union
+            (M.fromList
+              [ ((0, 3, 0), Placa)
+              , ((1, 3, 0), Pared)
+              , ((2, 2, 0), PuertaTemporizada False (-1) 10)
+              , ((3, 2, 0), Pared)
+              , ((3, 2, 1), Pared)
+              , ((3, 2, 2), Pared)
+              , ((3, 3, 1), Pared)
+              , ((3, 3, 2), Pared)
+              , ((4, 0, 0), Escalera)
+              , ((4, 2, 0), Pared)
+              , ((4, 2, 1), Pared)
+              , ((4, 2, 2), Pared)
+              , ((4, 3, 1), Pared)
+              , ((4, 3, 2), Pared)
+              , ((5, 1, 2), Pared)
+              , ((5, 2, 0), Pared)
+              , ((5, 2, 1), Pared)
+              , ((5, 2, 2), Pared)
+              , ((5, 3, 0), PlacaActivadoraTemporizada (2, 2, 0))
+              , ((5, 3, 1), Pared)
+              , ((5, 3, 2), Pared)
+              , ((5, 3, 3), Placa)
+              ])
+            (mapa 6 4 4)
+        , M.fromList
+            [ ((0, 0, 0), Barril)
+            , ((5, 0, 0), Globo)
+            ]
+        ),
+            
+    -- El jugador tiene que usar la cuerda para sacar la caja de la esquina y empujarla hasta la placa.
+    Sok ( [(4, 3, 0)]
+        , M.union
+            (M.fromList
+              [ ((0, 0, 0), Placa)
+              , ((2, 0, 0), Placa)
+              , ((4, 0, 0), Placa)
+              ])
+            (mapa 5 4 1)
+        , M.fromList
+            [ ((0, 3, 0), Caja)
+            , ((3, 0, 0), Cuerda)
+            ]
+        ),
+
+    -- El jugador tiene que usar dos globos para subir a la placa.
+    Sok ( [(1, 1, 0)]
+        , M.union
+            (M.fromList
+              [ ((0, 0, 0), Escalera)
+              , ((0, 1, 5), Pared)
+              , ((0, 1, 6), Placa)
+              ])
+            (mapa 2 2 7)
+        , M.fromList
+            [ ((1, 0, 0), Globo)
+            , ((1, 1, 2), Globo)
+            ]
+        ),
+
+    Sok ( [(5, 2, 0)]
+        , M.union
+            (M.fromList
+              [ ((0, 0, 0), Escalera)
+              , ((0, 0, 1), Escalera)
+              , ((0, 0, 2), Escalera)
+              , ((0, 0, 3), Escalera)
+              , ((0, 0, 4), Escalera)
+              , ((0, 1, 4), Pared)
+              , ((0, 5, 0), Escalera)
+              , ((1, 1, 0), Pared)
+              , ((1, 1, 1), Pared)
+              , ((1, 1, 2), Pared)
+              , ((1, 1, 3), Pared)
+              , ((1, 1, 4), Pared)
+              , ((1, 2, 0), Pared)
+              , ((1, 2, 1), Pared)
+              , ((1, 2, 2), Pared)
+              , ((1, 2, 3), Pared)
+              , ((1, 2, 4), Pared)
+              , ((1, 3, 0), Pared)
+              , ((1, 3, 1), Pared)
+              , ((1, 3, 2), Pared)
+              , ((1, 3, 3), Pared)
+              , ((1, 3, 4), Pared)
+              , ((1, 4, 0), Pared)
+              , ((1, 4, 1), Pared)
+              , ((1, 4, 2), Pared)
+              , ((1, 4, 3), Pared)
+              , ((1, 4, 4), Pared)
+              , ((2, 1, 0), Pared)
+              , ((2, 1, 1), Pared)
+              , ((2, 1, 2), Pared)
+              , ((2, 1, 3), Pared)
+              , ((2, 1, 4), Pared)
+              , ((2, 3, 0), Placa)
+              , ((2, 4, 0), Pared)
+              , ((2, 4, 1), Pared)
+              , ((2, 4, 2), Pared)
+              , ((2, 4, 3), Pared)
+              , ((2, 4, 4), Pared)
+              , ((3, 1, 0), Pared)
+              , ((3, 1, 1), Pared)
+              , ((3, 1, 2), Pared)
+              , ((3, 1, 3), Pared)
+              , ((3, 1, 4), Pared)
+              , ((3, 4, 0), Pared)
+              , ((3, 4, 1), Pared)
+              , ((3, 4, 2), Pared)
+              , ((3, 4, 3), Pared)
+              , ((3, 4, 4), Pared)
+              , ((4, 1, 0), Pared)
+              , ((4, 1, 1), Pared)
+              , ((4, 1, 2), Pared)
+              , ((4, 1, 3), Pared)
+              , ((4, 1, 4), Pared)
+              , ((4, 2, 0), Pared)
+              , ((4, 2, 1), Pared)
+              , ((4, 2, 2), Pared)
+              , ((4, 2, 3), Pared)
+              , ((4, 2, 4), Pared)
+              , ((4, 3, 0), Pared)
+              , ((4, 3, 1), Pared)
+              , ((4, 3, 2), Pared)
+              , ((4, 3, 3), Pared)
+              , ((4, 3, 4), Pared)
+              , ((4, 4, 0), Pared)
+              , ((4, 4, 1), Pared)
+              , ((4, 4, 2), Pared)
+              , ((4, 4, 3), Pared)
+              , ((4, 4, 4), Pared)
+              , ((5, 0, 0), Escalera)
+              , ((5, 5, 0), Escalera)
+              ])
+            (mapa 6 6 7)
+        , M.fromList
+            [ ((1, 5, 0), Globo)
+            , ((4, 0, 0), Globo)
+            , ((5, 4, 0), Globo)
+            ]
+        )
     ]
 
 -- Ejemplos sencillos de Sokoban 3D sin solución.
 sinSolucion :: [Sokoban]
 sinSolucion =
     [
-        -- La placa está aislada por una pared.
+-- La placa está aislada por una pared.
         Sok ([(0, 0, 0)], M.fromList [((0, 0, 0), Aire), ((2, 0, 0), Placa)], M.empty),
 
         -- La caja está contra una pared y no puede llegar a la placa.
@@ -724,7 +807,7 @@ sinSolucion =
             (M.fromList [((0, 0, 0), Placa), ((3, 0, 0), Placa),
                          ((4, 0, 0), Placa), ((7, 0, 0), Pared),
                          ((8, 0, 0), Placa)])
-            (mapa 1 9 1),
+            (mapa 9 1 1),
             M.fromList [((2, 0, 0), Caja), ((5, 0, 0), Caja)]),
 
         -- La puerta se cierra antes de que el jugador superior pueda llegar a la placa final.
@@ -790,3 +873,48 @@ guardarSolucion ruta pasos =
         unlines' []     = ""
         unlines' [x]    = "  " ++ x
         unlines' (x:xs) = "  " ++ x ++ ",\n" ++ unlines' xs
+
+-- Exporta una lista de soluciones (varios niveles) en un único archivo JSON
+guardarSoluciones :: FilePath -> [[Sokoban]] -> IO ()
+guardarSoluciones ruta listaPasos =
+    writeFile ruta ("[\n" ++ intercalar ",\n" (map nivelJson (zip [1..] listaPasos)) ++ "\n]\n")
+    where
+        nivelJson (i, pasos) =
+            "  {\n"
+            ++ "    \"nombre\": \"Nivel " ++ show (i :: Int) ++ " (" ++ show (max 0 (length pasos - 1)) ++ " movs)\",\n"
+            ++ "    \"pasos\": [\n"
+            ++ intercalar ",\n" (map (\p -> "      " ++ estadoAJson p) pasos)
+            ++ "\n    ]\n"
+            ++ "  }"
+        intercalar _ []     = ""
+        intercalar _ [x]    = x
+        intercalar s (x:xs) = x ++ s ++ intercalar s xs
+
+
+
+
+{- Para compilar
+
+ghci
+
+:set -i.
+:l Juegos/Juego_Sokoban.hs Resolutores/TakyonDFS.hs
+
+:r
+:m + Resolutores.TakyonDFS Juegos.Juego_Sokoban Data.Maybe
+guardarSoluciones "soluciones.json" (mapMaybe resolutor conSolucion)
+
+
+
+:r
+:m + Resolutores.TakyonDFS Juegos.Juego_Sokoban
+let Just camino = resolutor (last conSolucion)
+length camino
+guardarSolucion "solucion.json" camino
+
+
+:r
+:m + Resolutores.TakyonDFS Juegos.Juego_Sokoban Data.Maybe
+guardarSoluciones "soluciones.json" (mapMaybe resolutor sinSolucion)
+
+-}  

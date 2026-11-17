@@ -38,6 +38,22 @@
     .file-label:hover { border-color: #38bdf8; background: rgba(30, 41, 59, 1); }
     #fileInput { display: none; }
 
+    .level-row {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(30, 41, 59, 0.65);
+      padding: 6px 8px; border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .level-row select {
+      flex: 1; background: #0f172a; color: #f8fafc;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 6px; padding: 5px 8px; font-size: 12px; font-weight: 600;
+    }
+    .level-btn {
+      background: #334155; padding: 5px 9px; font-size: 12px; border-radius: 6px;
+    }
+    .level-btn:hover:not(:disabled) { background: #475569; }
+
     .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
     button {
       background: #2563eb; color: white; border: none; padding: 8px 6px;
@@ -78,9 +94,17 @@
     </div>
 
     <label class="file-label" for="fileInput">
-      <span>📂 Cargar archivo <b>solucion.json</b></span>
+      <span>📂 Cargar <b>soluciones.json</b> (1 o varios)</span>
     </label>
-    <input type="file" id="fileInput" accept=".json" />
+    <input type="file" id="fileInput" accept=".json" multiple />
+
+    <div class="level-row" id="levelRow">
+      <button class="level-btn" id="btnPrevLevel" disabled title="Nivel anterior (RePág)">◀</button>
+      <select id="levelSelect" disabled>
+        <option value="0">Sin niveles cargados</option>
+      </select>
+      <button class="level-btn" id="btnNextLevel" disabled title="Siguiente nivel (AvPág)">▶</button>
+    </div>
 
     <div class="timeline">
       <div class="timeline-info">
@@ -120,7 +144,7 @@
       <div class="item"><span class="dot" style="background:#ef4444"></span>Puerta Botón</div>
       <div class="item"><span class="dot" style="background:#f97316"></span>Puerta Palanca</div>
     </div>
-    <div class="hint">Ratón: Orbitar/Zoom · Teclas: ← → Espacio R</div>
+    <div class="hint">Ratón: Orbitar/Zoom · Teclas: ← → Espacio R · Niveles: RePág/AvPág</div>
   </div>
 
   <script type="importmap">
@@ -179,6 +203,8 @@
     const worldGroup = new THREE.Group();
     scene.add(worldGroup);
 
+    let juegos = [];      // [{ nombre: string, pasos: Estado[] }]
+    let juegoActual = 0;
     let estados = [];
     let pasoActual = 0;
     let timer = null;
@@ -234,24 +260,20 @@
       mesh.add(edges);
     }
 
-    // Construye un tramo de cuerda trenzada con nudo en su extremo hacia una dirección 3D (dx, dyThree, dzThree)
     function crearTensorCuerda(dx, dy, dz, longitud = 0.55) {
       const tramo = new THREE.Group();
       const dir = new THREE.Vector3(dx, dy, dz).normalize();
 
-      // Dos cabos paralelos trenzados
       [-0.035, 0.035].forEach(offset => {
         const cabo = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, longitud, 10), mat.Cuerda);
         cabo.castShadow = true;
         cabo.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-        // Desplazamiento perpendicular
         const perp = Math.abs(dir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
         const side = new THREE.Vector3().crossVectors(dir, perp).normalize().multiplyScalar(offset);
         cabo.position.copy(dir.clone().multiplyScalar(longitud / 2)).add(side);
         tramo.add(cabo);
       });
 
-      // Nudo / argolla de enganche en la punta
       const nudo = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 12), mat.CuerdaNudo);
       nudo.position.copy(dir.clone().multiplyScalar(longitud));
       nudo.castShadow = true;
@@ -260,7 +282,6 @@
       return tramo;
     }
 
-    // Construcción de mallas compuestas (En Haskell: (x, y, z) -> En Three.js: (x, z, y))
     function crearMalla(celda, x, y, z, ocupadasSet = null) {
       const tipo = celda.tipo;
       const group = new THREE.Group();
@@ -317,12 +338,10 @@
         hilo.position.y = -0.32;
         group.add(hilo);
       } else if (tipo === 'Cuerda') {
-        // Nudo central de unión
         const nudoCentral = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), mat.CuerdaNudo);
         nudoCentral.castShadow = true;
         group.add(nudoCentral);
 
-        // Detectar vecinos adyacentes en coordenadas Haskell (x, y, z)
         const vecinos = [
           { h: [1, 0, 0],  t: [1, 0, 0] },
           { h: [-1, 0, 0], t: [-1, 0, 0] },
@@ -343,13 +362,11 @@
           });
         }
 
-        // Si está suelta (sin vecinos), mostrarla extendida uniendo ambos lados en X por defecto
         if (conectados === 0) {
           group.add(crearTensorCuerda(-1, 0, 0, 0.44));
           group.add(crearTensorCuerda(1, 0, 0, 0.44));
         }
       } else if (tipo === 'Jugador') {
-        // Diseño 100% simétrico en 360° (cápsula + doble anillo energético + núcleo superior)
         const cuerpo = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.34, 12, 24), mat.Jugador);
         cuerpo.position.y = -0.05;
         cuerpo.castShadow = true;
@@ -419,7 +436,6 @@
       while (worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
       animatedMeshes.length = 0;
 
-      // Conjunto de posiciones ocupadas por objetos o jugadores para orientar las cuerdas
       const ocupadasSet = new Set();
       est.objetos.forEach(o => ocupadasSet.add(`${o.pos[0]},${o.pos[1]},${o.pos[2]}`));
       est.jugadores.forEach(j => ocupadasSet.add(`${j[0]},${j[1]},${j[2]}`));
@@ -480,8 +496,56 @@
       const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
       const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
       const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      const span = Math.max(
+        Math.max(...xs) - Math.min(...xs),
+        Math.max(...ys) - Math.min(...ys),
+        Math.max(...zs) - Math.min(...zs),
+        3
+      );
       controls.target.set(cx, cz, cy);
-      camera.position.set(cx + 6.5, cz + 6.5, cy + 8.5);
+      camera.position.set(cx + span * 0.9, cz + span * 0.9, cy + span * 1.15);
+    }
+
+    function seleccionarJuego(idx) {
+      if (!juegos.length) return;
+      detenerReproduccion();
+      juegoActual = Math.max(0, Math.min(idx, juegos.length - 1));
+      estados = juegos[juegoActual].pasos;
+      document.getElementById('levelSelect').value = String(juegoActual);
+      document.getElementById('btnPrevLevel').disabled = juegoActual <= 0;
+      document.getElementById('btnNextLevel').disabled = juegoActual >= juegos.length - 1;
+      if (estados.length) {
+        centrarCamara(estados[0]);
+        renderizarPaso(0);
+      }
+    }
+
+    // Normaliza cualquier formato JSON:
+    // 1) [ { nombre, pasos: [...] }, ... ] (multi-juego con metadatos)
+    // 2) [ [estado0, estado1, ...], [...] ] (array de caminos)
+    // 3) [ estado0, estado1, ... ] (un único camino)
+    function normalizarJson(data, nombreBase) {
+      if (!Array.isArray(data) || data.length === 0) return [];
+      const primero = data[0];
+      if (primero && Array.isArray(primero.pasos)) {
+        return data.map((item, i) => ({
+          nombre: item.nombre || `${nombreBase} - Nivel ${i + 1}`,
+          pasos: item.pasos
+        }));
+      }
+      if (Array.isArray(primero)) {
+        return data.map((pasos, i) => ({
+          nombre: `Nivel ${i + 1} (${Math.max(0, pasos.length - 1)} movs)`,
+          pasos
+        }));
+      }
+      if (primero && Array.isArray(primero.mapa)) {
+        return [{
+          nombre: `${nombreBase} (${Math.max(0, data.length - 1)} movs)`,
+          pasos: data
+        }];
+      }
+      return [];
     }
 
     function detenerReproduccion() {
@@ -509,20 +573,46 @@
       renderizarPaso(0);
     }
 
-    document.getElementById('fileInput').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      document.getElementById('fileName').textContent = file.name;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        detenerReproduccion();
-        estados = JSON.parse(ev.target.result);
-        ['btnReset', 'btnPrev', 'btnPlay', 'btnNext', 'stepSlider'].forEach(id => document.getElementById(id).disabled = false);
-        centrarCamara(estados[0]);
-        renderizarPaso(0);
-      };
-      reader.readAsText(file);
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      detenerReproduccion();
+
+      const nuevosJuegos = [];
+      for (const file of files) {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const baseName = file.name.replace(/\.json$/i, '');
+        nuevosJuegos.push(...normalizarJson(parsed, baseName));
+      }
+
+      if (!nuevosJuegos.length) return;
+      juegos = nuevosJuegos;
+
+      document.getElementById('fileName').textContent =
+        files.length === 1 ? `${files[0].name} (${juegos.length})` : `${files.length} archivos (${juegos.length} niveles)`;
+
+      const levelSelect = document.getElementById('levelSelect');
+      levelSelect.innerHTML = '';
+      juegos.forEach((j, idx) => {
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = j.nombre;
+        levelSelect.appendChild(opt);
+      });
+
+      ['btnReset', 'btnPrev', 'btnPlay', 'btnNext', 'stepSlider', 'levelSelect'].forEach(id => {
+        document.getElementById(id).disabled = false;
+      });
+
+      seleccionarJuego(0);
     });
+
+    document.getElementById('levelSelect').addEventListener('change', (e) => {
+      seleccionarJuego(Number(e.target.value));
+    });
+    document.getElementById('btnPrevLevel').onclick = () => seleccionarJuego(juegoActual - 1);
+    document.getElementById('btnNextLevel').onclick = () => seleccionarJuego(juegoActual + 1);
 
     document.getElementById('stepSlider').addEventListener('input', (e) => {
       detenerReproduccion();
@@ -542,6 +632,8 @@
       if (!estados.length) return;
       if (e.key === 'ArrowRight') { detenerReproduccion(); renderizarPaso(pasoActual + 1, pasoActual); }
       if (e.key === 'ArrowLeft')  { detenerReproduccion(); renderizarPaso(pasoActual - 1, pasoActual); }
+      if (e.key === 'PageDown')   { e.preventDefault(); seleccionarJuego(juegoActual + 1); }
+      if (e.key === 'PageUp')     { e.preventDefault(); seleccionarJuego(juegoActual - 1); }
       if (e.key === ' ')          { e.preventDefault(); timer ? detenerReproduccion() : iniciarReproduccion(); }
       if (e.key === 'r' || e.key === 'R') reiniciarVisor();
     });
