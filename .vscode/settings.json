@@ -1,4 +1,5 @@
 {
+  "prolog.executablePath": "C:\\Program Files\\swipl\\bin\\swipl.exe",
   "code-runner.executorMap": {
     "haskell": "C:\\ghcup\\bin\\runghc.exe"
   },
