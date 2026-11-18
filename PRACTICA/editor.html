@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Editor 3D - Sokoban Haskell</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; overflow: hidden;
+      background: radial-gradient(circle at center, #1e293b 0%, #090d16 100%);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #f8fafc;
+    }
+    #leftPanel, #rightPanel {
+      position: absolute; top: 14px; z-index: 10;
+      background: rgba(15, 23, 42, 0.84);
+      padding: 14px; border-radius: 14px;
+      display: flex; flex-direction: column; gap: 10px;
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      max-height: calc(100vh - 28px);
+      overflow-y: auto;
+    }
+    #leftPanel { left: 14px; width: 310px; }
+    #rightPanel { right: 14px; width: 380px; }
+
+    h1 { font-size: 14px; margin: 0; color: #38bdf8; letter-spacing: 0.4px; }
+    h2 { font-size: 11px; margin: 4px 0 0; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.6px; }
+
+    .dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .dim-box { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #cbd5e1; }
+    input[type="number"], select {
+      background: #0f172a; color: #f8fafc; border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 6px; padding: 5px 7px; font-size: 12px; width: 100%;
+    }
+
+    .floor-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(30, 41, 59, 0.8); padding: 6px 10px; border-radius: 8px;
+    }
+    .floor-bar span { font-weight: 700; font-size: 13px; color: #7dd3fc; }
+
+    .palette { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+    .tool-btn {
+      display: flex; align-items: center; gap: 7px;
+      background: #1e293b; color: #e2e8f0; border: 1px solid rgba(255,255,255,0.1);
+      padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 11px; text-align: left;
+      transition: all 0.15s;
+    }
+    .tool-btn:hover { background: #334155; }
+    .tool-btn.active {
+      background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #ffffff; font-weight: 600;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+    button.action {
+      background: #2563eb; color: white; border: none; padding: 8px 10px;
+      border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 12px;
+      transition: background 0.15s;
+    }
+    button.action:hover { background: #1d4ed8; }
+    button.secondary { background: #334155; }
+    button.secondary:hover { background: #475569; }
+    button.emerald { background: #059669; }
+    button.emerald:hover { background: #047857; }
+    button.link-mode { background: #d97706; }
+    button.link-mode.active { background: #f59e0b; color: #0f172a; box-shadow: 0 0 12px rgba(245,158,11,0.5); }
+
+    .file-label {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      background: rgba(30, 41, 59, 0.9); border: 1px dashed rgba(148, 163, 184, 0.45);
+      padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 12px;
+      color: #e2e8f0; transition: all 0.2s; flex: 1;
+    }
+    .file-label:hover { border-color: #38bdf8; background: rgba(30, 41, 59, 1); }
+    #jsonFileInput { display: none; }
+
+    textarea {
+      width: 100%; resize: vertical;
+      background: #090d16; color: #a5f3fc;
+      border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px;
+      padding: 10px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px;
+      line-height: 1.45;
+    }
+    #haskellOutput { height: 270px; }
+    #jsonInput { height: 115px; color: #fde68a; border-color: rgba(251, 191, 36, 0.25); }
+
+    .row { display: flex; gap: 6px; align-items: center; }
+    .divider { border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 2px 0; }
+    .status { font-size: 11px; color: #fbbf24; min-height: 16px; }
+    .hint { font-size: 10px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div id="leftPanel">
+    <h1>EDITOR 3D SOKOBAN</h1>
+
+    <h2>1. Dimensiones (X, Y, Z) y Base</h2>
+    <div class="dims">
+      <div class="dim-box"><label>Ancho (X)</label><input type="number" id="dimX" value="6" min="1" max="20"></div>
+      <div class="dim-box"><label>Fondo (Y)</label><input type="number" id="dimY" value="4" min="1" max="20"></div>
+      <div class="dim-box"><label>Alto (Z)</label><input type="number" id="dimZ" value="3" min="1" max="12"></div>
+    </div>
+    <div class="row">
+      <select id="baseFill">
+        <option value="Pared" selected>Base maciza de Paredes</option>
+        <option value="Aire">Base vacía de Aire</option>
+      </select>
+      <button class="action secondary" id="btnResetMap">Limpiar</button>
+    </div>
+
+    <h2>2. Planta Activa (Eje Z)</h2>
+    <div class="floor-bar">
+      <button class="action secondary" id="btnZDown">▼ Z-1</button>
+      <span id="zLabel">Planta Z = 0</span>
+      <button class="action secondary" id="btnZUp">▲ Z+1</button>
+    </div>
+
+    <h2>3. Pincel (Clic Izq: Poner / Quitar)</h2>
+    <div class="palette" id="palette"></div>
+
+    <h2>4. Enlaces y Temporizador</h2>
+    <button class="action link-mode" id="btnLinkMode">🔗 Vincular Mecanismo → Puerta</button>
+    <div class="row" style="font-size:11px; color:#cbd5e1;">
+      <label style="white-space:nowrap;">Turnos Puerta Temp.:</label>
+      <input type="number" id="tempDuration" value="6" min="1" max="50">
+    </div>
+    <div class="status" id="statusMsg">Listo para dibujar en Z = 0</div>
+    <div class="hint">Clic der.: Orbitar · Rueda: Zoom · Teclas Q/E: Cambiar Z</div>
+  </div>
+
+  <div id="rightPanel">
+    <div class="row" style="justify-content:space-between;">
+      <h1>CÓDIGO HASKELL GENERADO</h1>
+      <button class="action" id="btnCopy">📋 Copiar</button>
+    </div>
+    <textarea id="haskellOutput" readonly spellcheck="false"></textarea>
+    <button class="action secondary" id="btnExportJson">💾 Descargar estado JSON (para visor.html)</button>
+
+    <div class="divider"></div>
+
+    <h2>Importar configuración JSON</h2>
+    <div class="row">
+      <label class="file-label" for="jsonFileInput">
+        <span>📂 Subir archivo <b>.json</b></span>
+      </label>
+      <input type="file" id="jsonFileInput" accept=".json" />
+      <button class="action emerald" id="btnLoadJsonText">📥 Cargar JSON</button>
+    </div>
+    <textarea id="jsonInput" spellcheck="false" placeholder='Pega aquí el JSON del estado: {"jugadores": [...], "mapa": [...], "objetos": [...]} (o un array de pasos / niveles)...'></textarea>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const TOOLS = [
+      { id: 'Aire',              label: 'Aire (Paso)',    color: '#475569', kind: 'casilla' },
+      { id: 'Pared',             label: 'Pared',          color: '#334155', kind: 'casilla' },
+      { id: 'Placa',             label: 'Placa Obj.',     color: '#10b981', kind: 'casilla' },
+      { id: 'Escalera',          label: 'Escalera',       color: '#a855f7', kind: 'casilla' },
+      { id: 'Jugador',           label: 'Jugador',        color: '#38bdf8', kind: 'jugador' },
+      { id: 'Caja',              label: 'Caja',           color: '#d97706', kind: 'objeto'  },
+      { id: 'CajaMetal',         label: 'Caja Metal',     color: '#94a3b8', kind: 'objeto'  },
+      { id: 'Barril',            label: 'Barril',         color: '#92400e', kind: 'objeto'  },
+      { id: 'Cuerda',            label: 'Cuerda',         color: '#eab308', kind: 'objeto'  },
+      { id: 'Globo',             label: 'Globo',          color: '#f43f5e', kind: 'objeto'  },
+      { id: 'Boton',             label: 'Botón',          color: '#22d3ee', kind: 'objeto'  },
+      { id: 'PuertaBoton',       label: 'Puerta Botón',   color: '#ef4444', kind: 'casilla' },
+      { id: 'Palanca',           label: 'Palanca',        color: '#22c55e', kind: 'objeto'  },
+      { id: 'PuertaPalanca',     label: 'Puerta Palanca', color: '#f97316', kind: 'casilla' },
+      { id: 'PlacaTemporizada',  label: 'Placa Temp.',    color: '#f59e0b', kind: 'casilla' },
+      { id: 'PuertaTemporizada', label: 'Puerta Temp.',   color: '#fbbf24', kind: 'casilla' }
+    ];
+
+    let dimX = 6, dimY = 4, dimZ = 3;
+    let currentZ = 0;
+    let selectedTool = 'Aire';
+    let linkMode = false;
+    let pendingLinkSource = null;
+
+    const grid = new Map();
+
+    function keyOf(x, y, z) { return `${x},${y},${z}`; }
+    function defaultCasilla() { return document.getElementById('baseFill').value; }
+
+    function initGrid(customBase = null) {
+      grid.clear();
+      const base = customBase || defaultCasilla();
+      for (let x = 0; x < dimX; x++) {
+        for (let y = 0; y < dimY; y++) {
+          for (let z = 0; z < dimZ; z++) {
+            grid.set(keyOf(x, y, z), {
+              x, y, z,
+              casilla: z === 0 ? 'Aire' : base,
+              objeto: null,
+              jugador: false,
+              target: null,
+              duracion: Number(document.getElementById('tempDuration').value) || 6
+            });
+          }
+        }
+      }
+      currentZ = Math.min(currentZ, dimZ - 1);
+      rebuildScene();
+    }
+
+    // Extrae el primer estado válido desde cualquier formato JSON (objeto único, array de pasos, o array de niveles)
+    function extraerEstadoDesdeJson(data) {
+      if (!data) throw new Error('JSON vacío.');
+      if (Array.isArray(data)) {
+        if (data.length === 0) throw new Error('El array JSON está vacío.');
+        const primero = data[0];
+        if (primero && Array.isArray(primero.pasos) && primero.pasos.length > 0) {
+          return primero.pasos[0];
+        }
+        if (Array.isArray(primero) && primero.length > 0) {
+          return primero[0];
+        }
+        return primero;
+      }
+      return data;
+    }
+
+    function importarJson(rawText) {
+      try {
+        const parsed = JSON.parse(rawText);
+        const estado = extraerEstadoDesdeJson(parsed);
+
+        if (!estado || !Array.isArray(estado.mapa)) {
+          throw new Error('El JSON debe contener el campo "mapa".');
+        }
+
+        const jugadores = Array.isArray(estado.jugadores) ? estado.jugadores : [];
+        const objetos = Array.isArray(estado.objetos) ? estado.objetos : [];
+
+        // Calcular dimensiones máximas del bounding box
+        const todasCoords = [
+          ...estado.mapa.map(c => c.pos),
+          ...jugadores,
+          ...objetos.map(o => o.pos)
+        ].filter(Boolean);
+
+        if (todasCoords.length === 0) throw new Error('No hay coordenadas en el estado.');
+
+        dimX = Math.max(...todasCoords.map(p => p[0])) + 1;
+        dimY = Math.max(...todasCoords.map(p => p[1])) + 1;
+        dimZ = Math.max(...todasCoords.map(p => p[2])) + 1;
+
+        document.getElementById('dimX').value = dimX;
+        document.getElementById('dimY').value = dimY;
+        document.getElementById('dimZ').value = dimZ;
+
+        // Detectar tipo de relleno predominante (Pared o Aire)
+        const numParedes = estado.mapa.filter(c => c.tipo === 'Pared').length;
+        const baseDetectada = numParedes >= estado.mapa.length / 2 ? 'Pared' : 'Aire';
+        document.getElementById('baseFill').value = baseDetectada;
+
+        // Inicializar toda la rejilla con esa base
+        grid.clear();
+        for (let x = 0; x < dimX; x++) {
+          for (let y = 0; y < dimY; y++) {
+            for (let z = 0; z < dimZ; z++) {
+              grid.set(keyOf(x, y, z), {
+                x, y, z,
+                casilla: baseDetectada,
+                objeto: null,
+                jugador: false,
+                target: null,
+                duracion: Number(document.getElementById('tempDuration').value) || 6
+              });
+            }
+          }
+        }
+
+        // Volcar casillas del mapa
+        estado.mapa.forEach(c => {
+          const [x, y, z] = c.pos;
+          const cell = grid.get(keyOf(x, y, z));
+          if (!cell) return;
+          cell.casilla = c.tipo || 'Aire';
+          if (c.tipo === 'PuertaTemporizada' && typeof c.duracion === 'number') {
+            cell.duracion = c.duracion;
+            document.getElementById('tempDuration').value = c.duracion;
+          }
+          if (Array.isArray(c.destino) && c.destino.length === 3) {
+            cell.target = c.destino;
+          }
+        });
+
+        // Volcar objetos
+        objetos.forEach(o => {
+          const [x, y, z] = o.pos;
+          const cell = grid.get(keyOf(x, y, z));
+          if (!cell) return;
+          if (cell.casilla === 'Pared') cell.casilla = 'Aire';
+          const tipoNormalizado = (o.tipo === 'PalancaCerrada' || o.tipo === 'PalancaAbierta') ? 'Palanca' : o.tipo;
+          cell.objeto = tipoNormalizado;
+          if (Array.isArray(o.destino) && o.destino.length === 3) {
+            cell.target = o.destino;
+          }
+        });
+
+        // Volcar jugadores
+        jugadores.forEach(([x, y, z]) => {
+          const cell = grid.get(keyOf(x, y, z));
+          if (!cell) return;
+          if (cell.casilla === 'Pared') cell.casilla = 'Aire';
+          cell.jugador = true;
+        });
+
+        // Autovincular si hay exactamente 1 mecanismo y 1 puerta correspondiente sin enlace explícito
+        autoVincularSiUnico('Boton', 'PuertaBoton');
+        autoVincularSiUnico('Palanca', 'PuertaPalanca');
+        autoVincularSiUnico('PlacaTemporizada', 'PuertaTemporizada');
+
+        currentZ = 0;
+        controls.target.set((dimX - 1) / 2, 0, (dimY - 1) / 2);
+        rebuildScene();
+        setStatus(`✅ JSON importado (${dimX}×${dimY}×${dimZ}). Revisa enlaces con 🔗 si hay varias puertas.`);
+      } catch (err) {
+        setStatus(`❌ Error al leer JSON: ${err.message}`);
+      }
+    }
+
+    function autoVincularSiUnico(tipoOrigen, tipoPuerta) {
+      const origenes = [];
+      const puertas = [];
+      grid.forEach(c => {
+        if (c.objeto === tipoOrigen || c.casilla === tipoOrigen) origenes.push(c);
+        if (c.casilla === tipoPuerta) puertas.push(c);
+      });
+      if (origenes.length > 0 && puertas.length === 1) {
+        const p = puertas[0];
+        origenes.forEach(o => { if (!o.target) o.target = [p.x, p.y, p.z]; });
+      }
+    }
+
+    // Construir paleta UI
+    const paletteEl = document.getElementById('palette');
+    TOOLS.forEach(t => {
+      const btn = document.createElement('button');
+      btn.className = 'tool-btn' + (t.id === selectedTool ? ' active' : '');
+      btn.innerHTML = `<span class="dot" style="background:${t.color}"></span>${t.label}`;
+      btn.onclick = () => {
+        selectedTool = t.id;
+        linkMode = false;
+        pendingLinkSource = null;
+        document.getElementById('btnLinkMode').classList.remove('active');
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        setStatus(`Pincel activo: ${t.label}`);
+      };
+      paletteEl.appendChild(btn);
+    });
+
+    function setStatus(msg) {
+      document.getElementById('statusMsg').textContent = msg;
+    }
+
+    // Escena Three.js
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+    camera.position.set(8, 10, 11);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.mouseButtons = {
+      LEFT: null,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.ROTATE
+    };
+
+    scene.add(new THREE.HemisphereLight(0xe0f2fe, 0x1e293b, 1.1));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(12, 20, 15);
+    scene.add(dirLight);
+
+    const worldGroup = new THREE.Group();
+    scene.add(worldGroup);
+
+    const cursorMesh = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02)),
+      new THREE.LineBasicMaterial({ color: 0x38bdf8 })
+    );
+    cursorMesh.visible = false;
+    scene.add(cursorMesh);
+
+    const colorMap = Object.fromEntries(TOOLS.map(t => [t.id, t.color]));
+
+    function rebuildScene() {
+      while (worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
+      document.getElementById('zLabel').textContent = `Planta Z = ${currentZ} / ${dimZ - 1}`;
+
+      for (let x = 0; x < dimX; x++) {
+        for (let y = 0; y < dimY; y++) {
+          const cellFrame = new THREE.LineSegments(
+            new THREE.EdgesGeometry(new THREE.PlaneGeometry(0.98, 0.98)),
+            new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.28 })
+          );
+          cellFrame.rotation.x = -Math.PI / 2;
+          cellFrame.position.set(x, currentZ - 0.49, y);
+          worldGroup.add(cellFrame);
+        }
+      }
+
+      grid.forEach(cell => {
+        if (cell.z > currentZ) return;
+        const isCurrent = cell.z === currentZ;
+        const opacity = isCurrent ? 0.95 : 0.22;
+
+        if (cell.casilla !== 'Aire') {
+          const isPlate = cell.casilla === 'Placa' || cell.casilla === 'PlacaTemporizada';
+          const geo = isPlate
+            ? new THREE.CylinderGeometry(0.4, 0.43, 0.12, 20)
+            : new THREE.BoxGeometry(0.94, 0.94, 0.94);
+          const mat = new THREE.MeshStandardMaterial({
+            color: colorMap[cell.casilla] || '#334155',
+            transparent: true,
+            opacity: cell.casilla === 'Pared' && isCurrent ? 0.55 : opacity
+          });
+          const m = new THREE.Mesh(geo, mat);
+          m.position.set(cell.x, isPlate ? cell.z - 0.42 : cell.z, cell.y);
+          worldGroup.add(m);
+        }
+
+        if (cell.objeto) {
+          const geo = cell.objeto === 'Globo'
+            ? new THREE.SphereGeometry(0.36, 18, 18)
+            : cell.objeto === 'Barril'
+              ? new THREE.CylinderGeometry(0.34, 0.34, 0.8, 16)
+              : new THREE.BoxGeometry(0.76, 0.76, 0.76);
+          const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+            color: colorMap[cell.objeto],
+            transparent: !isCurrent,
+            opacity
+          }));
+          m.position.set(cell.x, cell.z, cell.y);
+          worldGroup.add(m);
+        }
+
+        if (cell.jugador) {
+          const m = new THREE.Mesh(
+            new THREE.CapsuleGeometry(0.24, 0.32, 8, 16),
+            new THREE.MeshStandardMaterial({ color: '#38bdf8', emissive: '#0284c7', transparent: !isCurrent, opacity })
+          );
+          m.position.set(cell.x, cell.z, cell.y);
+          worldGroup.add(m);
+        }
+
+        if (cell.target && isCurrent) {
+          const pts = [
+            new THREE.Vector3(cell.x, cell.z + 0.15, cell.y),
+            new THREE.Vector3(cell.target[0], cell.target[2] + 0.15, cell.target[1])
+          ];
+          const line = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(pts),
+            new THREE.LineBasicMaterial({ color: 0xfbbf24 })
+          );
+          worldGroup.add(line);
+        }
+      });
+
+      generarCodigoHaskell();
+    }
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const hitPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+    function getHoveredCell(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      hitPlane.constant = -currentZ;
+      raycaster.setFromCamera(pointer, camera);
+      const pt = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(hitPlane, pt)) return null;
+      const x = Math.round(pt.x);
+      const y = Math.round(pt.z);
+      if (x < 0 || x >= dimX || y < 0 || y >= dimY) return null;
+      return grid.get(keyOf(x, y, currentZ));
+    }
+
+    renderer.domElement.addEventListener('pointermove', (e) => {
+      const cell = getHoveredCell(e);
+      if (cell) {
+        cursorMesh.visible = true;
+        cursorMesh.position.set(cell.x, cell.z, cell.y);
+      } else {
+        cursorMesh.visible = false;
+      }
+    });
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const cell = getHoveredCell(e);
+      if (!cell) return;
+
+      if (linkMode) {
+        if (!pendingLinkSource) {
+          const hasMech = cell.objeto === 'Boton' || cell.objeto === 'Palanca' || cell.casilla === 'PlacaTemporizada';
+          if (!hasMech) {
+            setStatus('⚠️ Selecciona primero un Botón, Palanca o Placa Temp.');
+            return;
+          }
+          pendingLinkSource = cell;
+          setStatus(`Origen (${cell.x},${cell.y},${cell.z}) seleccionado. Haz clic en la puerta destino...`);
+        } else {
+          pendingLinkSource.target = [cell.x, cell.y, cell.z];
+          setStatus(`✅ Enlazado (${pendingLinkSource.x},${pendingLinkSource.y},${pendingLinkSource.z}) → (${cell.x},${cell.y},${cell.z})`);
+          pendingLinkSource = null;
+          rebuildScene();
+        }
+        return;
+      }
+
+      const tool = TOOLS.find(t => t.id === selectedTool);
+      if (tool.kind === 'casilla') {
+        cell.casilla = cell.casilla === tool.id ? 'Aire' : tool.id;
+        if (tool.id === 'Pared') { cell.objeto = null; cell.jugador = false; }
+        if (tool.id === 'PuertaTemporizada') {
+          cell.duracion = Number(document.getElementById('tempDuration').value) || 6;
+        }
+      } else if (tool.kind === 'objeto') {
+        if (cell.casilla === 'Pared') cell.casilla = 'Aire';
+        cell.jugador = false;
+        cell.objeto = cell.objeto === tool.id ? null : tool.id;
+      } else if (tool.kind === 'jugador') {
+        if (cell.casilla === 'Pared') cell.casilla = 'Aire';
+        cell.objeto = null;
+        cell.jugador = !cell.jugador;
+      }
+
+      setStatus(`Editado (${cell.x}, ${cell.y}, ${cell.z}) → ${tool.label}`);
+      rebuildScene();
+    });
+
+    function generarCodigoHaskell() {
+      const base = defaultCasilla();
+      const jugadores = [];
+      const casillas = [];
+      const objetos = [];
+
+      grid.forEach(c => {
+        const pos = `(${c.x}, ${c.y}, ${c.z})`;
+        if (c.jugador) jugadores.push(pos);
+
+        if (c.casilla !== base) {
+          if (c.casilla === 'PlacaTemporizada') {
+            const t = c.target ? `(${c.target[0]}, ${c.target[1]}, ${c.target[2]})` : '(0, 0, 0)';
+            casillas.push(`(${pos}, PlacaActivadoraTemporizada ${t})`);
+          } else if (c.casilla === 'PuertaTemporizada') {
+            casillas.push(`(${pos}, PuertaTemporizada False (-1) ${c.duracion})`);
+          } else {
+            casillas.push(`(${pos}, ${c.casilla})`);
+          }
+        }
+
+        if (c.objeto) {
+          if (c.objeto === 'Boton') {
+            const t = c.target ? `(${c.target[0]}, ${c.target[1]}, ${c.target[2]})` : '(0, 0, 0)';
+            objetos.push(`(${pos}, Boton ${t})`);
+          } else if (c.objeto === 'Palanca') {
+            const t = c.target ? `(${c.target[0]}, ${c.target[1]}, ${c.target[2]})` : '(0, 0, 0)';
+            objetos.push(`(${pos}, Palanca ${t} False)`);
+          } else {
+            objetos.push(`(${pos}, ${c.objeto})`);
+          }
+        }
+      });
+
+      const baseExpr = base === 'Aire'
+        ? `(mapa ${dimX} ${dimY} ${dimZ})`
+        : `(M.fromList [((x, y, z), Pared) | x <- [0..${dimX - 1}], y <- [0..${dimY - 1}], z <- [0..${dimZ - 1}]])`;
+
+      const code =
+`    Sok ( [${jugadores.join(', ')}]
+        , M.union
+            (M.fromList
+              [ ${casillas.join('\n              , ')}
+              ])
+            ${baseExpr}
+        , M.fromList
+            [ ${objetos.join('\n            , ')}
+            ]
+        )`;
+
+      document.getElementById('haskellOutput').value = code;
+    }
+
+    document.getElementById('btnExportJson').onclick = () => {
+      const jugadores = [], mapa = [], objetos = [];
+      grid.forEach(c => {
+        if (c.jugador) jugadores.push([c.x, c.y, c.z]);
+        if (c.casilla === 'PuertaTemporizada') {
+          mapa.push({ pos: [c.x, c.y, c.z], tipo: 'PuertaTemporizada', abierta: false, tiempo: -1, duracion: c.duracion });
+        } else {
+          mapa.push({ pos: [c.x, c.y, c.z], tipo: c.casilla });
+        }
+        if (c.objeto) {
+          const tipo = c.objeto === 'Palanca' ? 'PalancaCerrada' : c.objeto;
+          objetos.push({ pos: [c.x, c.y, c.z], tipo });
+        }
+      });
+      const blob = new Blob([JSON.stringify([{ jugadores, mapa, objetos }], null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'nivel_custom.json';
+      a.click();
+    };
+
+    // Eventos de importación JSON (archivo o pegado directo)
+    document.getElementById('jsonFileInput').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      document.getElementById('jsonInput').value = text;
+      importarJson(text);
+      e.target.value = '';
+    });
+
+    document.getElementById('btnLoadJsonText').onclick = () => {
+      const text = document.getElementById('jsonInput').value.trim();
+      if (!text) {
+        setStatus('⚠️ Pega primero un JSON en el recuadro inferior.');
+        return;
+      }
+      importarJson(text);
+    };
+
+    document.getElementById('btnCopy').onclick = () => {
+      const ta = document.getElementById('haskellOutput');
+      ta.select();
+      navigator.clipboard.writeText(ta.value);
+      setStatus('📋 Código Haskell copiado al portapapeles');
+    };
+
+    document.getElementById('btnLinkMode').onclick = () => {
+      linkMode = !linkMode;
+      pendingLinkSource = null;
+      document.getElementById('btnLinkMode').classList.toggle('active', linkMode);
+      setStatus(linkMode ? '🔗 Modo enlace: haz clic en un Botón, Palanca o Placa Temp.' : 'Modo enlace desactivado');
+    };
+
+    ['dimX', 'dimY', 'dimZ'].forEach(id => {
+      document.getElementById(id).addEventListener('change', () => {
+        dimX = Math.max(1, Number(document.getElementById('dimX').value));
+        dimY = Math.max(1, Number(document.getElementById('dimY').value));
+        dimZ = Math.max(1, Number(document.getElementById('dimZ').value));
+        initGrid();
+      });
+    });
+
+    document.getElementById('baseFill').addEventListener('change', () => initGrid());
+    document.getElementById('btnResetMap').onclick = () => initGrid();
+    document.getElementById('btnZUp').onclick = () => { if (currentZ < dimZ - 1) { currentZ++; rebuildScene(); } };
+    document.getElementById('btnZDown').onclick = () => { if (currentZ > 0) { currentZ--; rebuildScene(); } };
+
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT') return;
+      if (e.key === 'e' || e.key === 'E') { if (currentZ < dimZ - 1) { currentZ++; rebuildScene(); } }
+      if (e.key === 'q' || e.key === 'Q') { if (currentZ > 0) { currentZ--; rebuildScene(); } }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    initGrid();
+    controls.target.set(dimX / 2, 0, dimY / 2);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
