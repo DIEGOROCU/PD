@@ -966,7 +966,22 @@ conSolucion =
         (mapa 3 1 3))
         M.empty
         M.empty
-        (M.fromList [((1, 0, 0), JetpackItem)])
+        (M.fromList [((1, 0, 0), JetpackItem)]),
+
+    crearNivel [jugadorConId 1 (2, 3, 0)]
+        (M.union
+            (M.fromList
+              [ ((0, 3, 1), Pared)
+              , ((0, 3, 2), Placa)
+              ])
+            (mapa 3 4 3))
+        M.empty
+        M.empty
+        (M.fromList
+            [ ((0, 0, 0), JetpackItem)
+            ])
+
+        
     ]
 
 -- Ejemplos sencillos de Sokoban 3D sin solución.
