@@ -960,14 +960,6 @@ conSolucion =
         M.empty,
 
     -- El jugador recoge el jetpack y usa su rol para subir hasta la placa.
-    crearNivel [jugadorConId 1 (0, 0, 0)]
-        (M.union
-        (M.fromList [((1, 0, 2), Placa)])
-        (mapa 3 1 3))
-        M.empty
-        M.empty
-        (M.fromList [((1, 0, 0), JetpackItem)]),
-
     crearNivel [jugadorConId 1 (2, 3, 0)]
         (M.union
             (M.fromList
@@ -979,6 +971,36 @@ conSolucion =
         M.empty
         (M.fromList
             [ ((0, 0, 0), JetpackItem)
+            ]),
+
+    -- El jugador recoge el pico y rompe la pared para llegar a la placa.
+    crearNivel [jugadorConId 1 (0, 3, 0)]
+        (M.union
+            (M.fromList
+              [ ((0, 0, 1), Pared)
+              , ((0, 0, 2), Placa)
+              , ((0, 1, 1), Pared)
+              , ((0, 2, 1), Pared)
+              , ((0, 3, 1), Pared)
+              , ((1, 0, 0), Pared)
+              , ((1, 0, 1), Pared)
+              , ((1, 0, 2), Placa)
+              , ((1, 1, 0), Pared)
+              , ((1, 1, 1), Pared)
+              , ((1, 2, 0), Pared)
+              , ((1, 2, 1), Pared)
+              , ((1, 3, 0), Pared)
+              , ((1, 3, 1), Pared)
+              , ((2, 3, 0), Escalera)
+              , ((2, 3, 1), Escalera)
+              ])
+            (mapa 3 4 3))
+        (M.fromList
+            [ ((0, 3, 2), Barril)
+            ])
+        M.empty
+        (M.fromList
+            [ ((0, 0, 0), PicoItem)
             ])
 
         
@@ -1152,5 +1174,11 @@ guardarSolucion "solucion.json" camino
 :r
 :m + Resolutores.TakyonDFS Juegos.Juego_Sokoban Data.Maybe
 guardarSoluciones "soluciones.json" (mapMaybe resolutor sinSolucion)
+
+
+
+
+python3 -m http.server 8000
+
 
 -}
