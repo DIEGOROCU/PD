@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sokoban 3D Studio - Editor y Visor</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <!-- Barra superior única para cambiar entre Editor y Visor y transferir estados -->
+  <nav id="modeBar">
+    <div class="mode-switch">
+      <button id="btnModeEditor" class="mode-btn active">🛠️ Modo Editor</button>
+      <button id="btnModeVisor" class="mode-btn">🎬 Modo Visor</button>
+    </div>
+    <button id="btnTransfer" class="action emerald">▶ Probar en Visor</button>
+  </nav>
+
+  <!-- ==================== INTERFAZ MODO EDITOR ==================== -->
+  <div id="editorUI">
+    <aside id="editorLeft" class="panel left">
+      <h1>EDITOR 3D SOKOBAN</h1>
+
+      <h2>1. Dimensiones (X, Y, Z) y Base</h2>
+      <div class="dims">
+        <div class="dim-box"><label>Ancho (X)</label><input type="number" id="dimX" value="6" min="1" max="20"></div>
+        <div class="dim-box"><label>Fondo (Y)</label><input type="number" id="dimY" value="4" min="1" max="20"></div>
+        <div class="dim-box"><label>Alto (Z)</label><input type="number" id="dimZ" value="3" min="1" max="12"></div>
+      </div>
+      <div class="row">
+        <select id="baseFill">
+          <option value="Pared" selected>Base maciza de Paredes</option>
+          <option value="Aire">Base vacía de Aire</option>
+        </select>
+        <button class="action secondary" id="btnResetMap">Limpiar</button>
+      </div>
+
+      <h2>2. Planta Activa (Eje Z)</h2>
+      <div class="floor-bar">
+        <button class="action secondary" id="btnZDown">▼ Z-1</button>
+        <span id="zLabel">Planta Z = 0</span>
+        <button class="action secondary" id="btnZUp">▲ Z+1</button>
+      </div>
+
+      <h2>3. Pincel (Clic Izq: Poner / Quitar)</h2>
+      <div class="row" style="font-size:11px; color:#cbd5e1;">
+        <label style="white-space:nowrap;">Rol Jugador:</label>
+        <select id="playerRoleSelect"></select>
+      </div>
+      <div class="palette" id="palette"></div>
+
+      <h2>4. Enlaces y Temporizador</h2>
+      <button class="action link-mode" id="btnLinkMode">🔗 Vincular Mecanismo → Puerta</button>
+      <div class="row" style="font-size:11px; color:#cbd5e1;">
+        <label style="white-space:nowrap;">Turnos Puerta Temp.:</label>
+        <input type="number" id="tempDuration" value="6" min="1" max="50">
+      </div>
+      <div class="status" id="statusMsg">Listo para dibujar en Z = 0</div>
+      <div class="hint">Clic der.: Orbitar · Rueda: Zoom · Teclas Q/E: Cambiar Z</div>
+    </aside>
+
+    <aside id="editorRight" class="panel right">
+      <div class="row" style="justify-content:space-between;">
+        <h1>CÓDIGO HASKELL GENERADO</h1>
+        <button class="action" id="btnCopy">📋 Copiar</button>
+      </div>
+      <textarea id="haskellOutput" readonly spellcheck="false"></textarea>
+      <button class="action secondary" id="btnExportJson">💾 Descargar estado JSON</button>
+
+      <div class="divider"></div>
+
+      <h2>Importar configuración JSON</h2>
+      <div class="row">
+        <label class="file-label" for="editorJsonFileInput">
+          <span>📂 Subir archivo <b>.json</b></span>
+        </label>
+        <input type="file" id="editorJsonFileInput" accept=".json" />
+        <button class="action emerald" id="btnLoadJsonText">📥 Cargar JSON</button>
+      </div>
+      <textarea id="jsonInput" spellcheck="false" placeholder='Pega aquí el JSON del estado o solución...'></textarea>
+    </aside>
+  </div>
+
+  <!-- ==================== INTERFAZ MODO VISOR ==================== -->
+  <div id="visorUI" class="hidden">
+    <aside id="visorLeft" class="panel left">
+      <div class="header">
+        <h1>SOKOBAN 3D VISOR</h1>
+        <span class="badge" id="fileName">Sin archivo</span>
+      </div>
+
+      <label class="file-label" for="visorFileInput">
+        <span>📂 Cargar <b>soluciones.json</b> (1 o varios)</span>
+      </label>
+      <input type="file" id="visorFileInput" accept=".json" multiple />
+
+      <div class="level-row">
+        <button class="level-btn" id="btnPrevLevel" disabled title="Nivel anterior (RePág)">◀</button>
+        <select id="levelSelect" disabled>
+          <option value="0">Sin niveles cargados</option>
+        </select>
+        <button class="level-btn" id="btnNextLevel" disabled title="Siguiente nivel (AvPág)">▶</button>
+      </div>
+
+      <div class="timeline">
+        <div class="timeline-info">
+          <span id="stepLabel">Paso: 0 / 0</span>
+          <span id="pctLabel">0%</span>
+        </div>
+        <input type="range" id="stepSlider" min="0" max="0" value="0" disabled />
+      </div>
+
+      <div class="controls">
+        <button class="action" id="btnReset" disabled title="Reiniciar (R)">↺ Reset</button>
+        <button class="action" id="btnPrev" disabled title="Paso anterior (←)">⏮ Ant.</button>
+        <button class="action" id="btnPlay" disabled title="Play/Pausa (Espacio)">▶ Play</button>
+        <button class="action" id="btnNext" disabled title="Siguiente paso (→)">Sig. ⏭</button>
+      </div>
+
+      <div class="speed-row">
+        <span>Velocidad:</span>
+        <select id="speedSelect">
+          <option value="750">0.5x (Lenta)</option>
+          <option value="400" selected>1.0x (Normal)</option>
+          <option value="180">2.0x (Rápida)</option>
+        </select>
+      </div>
+
+      <!-- Leyenda generada dinámicamente desde js/catalogo.js -->
+      <div id="leyenda"></div>
+      <div class="hint">Ratón: Orbitar/Zoom · Teclas: ← → Espacio R · Niveles: RePág/AvPág</div>
+    </aside>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

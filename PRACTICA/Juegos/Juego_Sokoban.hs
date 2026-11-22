@@ -4,7 +4,7 @@
 
 module Juegos.Juego_Sokoban where
 
-import Jugable 
+import Jugable
 import qualified Data.Map as M
 
 --------------------------------------------------
@@ -44,7 +44,7 @@ data Objeto
     -- Todos los objetos son sólidos (se puede caminar sobre ellos) y tienen gravedad salvo el globo y los mecanismos fijos
 
 -- Un item no tiene la gravedad ni la solidez de un objeto.
-data Item = JetpackItem
+data Item = JetpackItem | PicoItem
     deriving (Eq, Ord, Show)
 
 -- Direcciones en el espacio 3D:
@@ -63,7 +63,7 @@ type MapaItems = M.Map Posicion Item
 type MapaRoles = M.Map JugadorId Rol
 
 -- Define el comportamiento especial que puede tener un jugador.
-data Rol = Normal | Jetpack
+data Rol = Normal | Jetpack | Minero
     deriving (Eq, Ord, Show)
 
 -- Las acciones las hace el jugador, las reacciones los objetos
@@ -76,23 +76,56 @@ data Accion
 
 type Reaccion = (Posicion, Direccion)
 
-type Estado =
-    (
-        -- Lista de posiciones de los jugadores
-        [Jugador],
-        -- Diccionario que describe el mapa del juego
-        MapaCasillas,
-        -- Diccionario que describe la posición de los objetos
-        MapaObjetos,
-        -- Rol activo asociado a la posición de cada jugador
-        MapaRoles,
-        -- Items recogibles situados en el mapa
-        MapaItems
-    )
+-- Registro que encapsula el estado completo del juego, desacoplando sus componentes posicionales.
+data Estado = Estado
+    { -- Lista de posiciones de los jugadores
+      stJugadores :: [Jugador]
+      -- Diccionario que describe el mapa del juego
+    , stMapa      :: MapaCasillas
+      -- Diccionario que describe la posición de los objetos
+    , stObjetos   :: MapaObjetos
+      -- Rol activo asociado a la posición de cada jugador
+    , stRoles     :: MapaRoles
+      -- Items recogibles situados en el mapa
+    , stItems     :: MapaItems
+    }
+    deriving (Eq, Ord, Show)
 
 -- Juego
 newtype Sokoban = Sok Estado
     deriving (Eq, Ord, Show)
+
+--------------------------------------------------
+-- Perfiles de dominio
+--------------------------------------------------
+
+-- Agrupa las propiedades físicas de una casilla en un único lugar.
+data PerfilCasilla = PerfilCasilla
+    { cPisable     :: Bool
+    , cSueloSolido :: Bool
+    }
+
+-- Agrupa las propiedades físicas y de interacción de un objeto.
+data PerfilObjeto = PerfilObjeto
+    { oEmpujable       :: Bool
+    , oTirable         :: Bool
+    , oMovHorizontal   :: Bool
+    , oMovVertical     :: Bool
+    , oAdhesivo        :: Bool
+    , oSoloSeMueveSola :: Bool
+    , oTieneGravedad   :: Bool
+    , oInteractuar     :: Estado -> Posicion -> Maybe Estado
+    }
+
+-- Agrupa las capacidades y reglas físicas asociadas a un rol sin acoplarlas al motor.
+data PerfilRol = PerfilRol
+    { pAfectadoPorGravedad :: Bool
+    , pPuedePasarCasilla   :: Casilla -> Bool
+    , pPuedeEmpujar        :: Objeto -> Bool
+    , pPuedeTirar          :: Objeto -> Bool
+    , pIgnoraPesoMetal     :: Bool
+    , pHabilidadEspecial   :: Estado -> Jugador -> Direccion -> Maybe Estado
+    }
 
 --------------------------------------------------
 -- Instancia de Jugable
@@ -101,18 +134,18 @@ newtype Sokoban = Sok Estado
 instance Jugable Sokoban where
 
     -- Función esExito: se gana cuando todas las placas están ocupadas por un jugador o un objeto
-    esExito (Sok (jugadores, mapaJuego, objetos, _, _)) =
+    esExito (Sok estado) =
         all estaPisada placas
         where
-            placas       = listaPosicionesCasilla (jugadores, mapaJuego, objetos, M.empty, M.empty) Placa
-            ocupadas     = posicionesJugadores jugadores ++ M.keys objetos
+            placas       = listaPosicionesCasilla estado Placa
+            ocupadas     = posicionesJugadores (stJugadores estado) ++ M.keys (stObjetos estado)
             estaPisada p = p `elem` ocupadas
 
-    opciones (Sok estado@(jugadores, _, _, _, _))
+    opciones (Sok estado)
             | estadoEstable /= estado = [Sok estadoEstable]
             | otherwise =
                 [ Sok nuevaPosicion
-                | jugador <- jugadores
+                | jugador <- stJugadores estado
                 , direccion <- [minBound .. maxBound]
                 , accion <- [AccionAvanzar jugador direccion,
                             AccionMoverObjeto jugador direccion,
@@ -129,12 +162,12 @@ instance Jugable Sokoban where
 
 -- Listas de Casillas y Objetos
 listaPosicionesCasilla :: Estado -> Casilla -> [Posicion]
-listaPosicionesCasilla (_, mapaJuego, _, _, _) casilla =
-    M.keys $ M.filter (== casilla) mapaJuego
+listaPosicionesCasilla estado casilla =
+    M.keys $ M.filter (== casilla) (stMapa estado)
 
 listaPosicionesObjeto :: Estado -> Objeto -> [Posicion]
-listaPosicionesObjeto (_, _, objetos, _, _) objeto =
-    M.keys $ M.filter (== objeto) objetos
+listaPosicionesObjeto estado objeto =
+    M.keys $ M.filter (== objeto) (stObjetos estado)
 
 -- Suma de una posición 3D y una dirección
 sumaDireccion :: Posicion -> Direccion -> Posicion
@@ -164,102 +197,232 @@ esDireccionVertical _      = False
 esDireccionHorizontal :: Direccion -> Bool
 esDireccionHorizontal = not . esDireccionVertical
 
+--------------------------------------------------
+-- Consultas espaciales y de estado
+--------------------------------------------------
+
+-- Devuelve la casilla en una posición (Limite si está fuera del mapa).
+casillaEn :: Estado -> Posicion -> Casilla
+casillaEn estado pos =
+    M.findWithDefault Limite pos (stMapa estado)
+
+-- Indica si una posición está ocupada por algún objeto sólido o por algún jugador.
+estaOcupada :: Estado -> Posicion -> Bool
+estaOcupada estado pos =
+    M.member pos (stObjetos estado) || pos `elem` posicionesJugadores (stJugadores estado)
+
+-- Indica si un jugador con un determinado perfil puede entrar en una posición libre.
+esTransitablePara :: PerfilRol -> Estado -> Posicion -> Bool
+esTransitablePara perfil estado pos =
+    pPuedePasarCasilla perfil (casillaEn estado pos) && not (estaOcupada estado pos)
+
+-- Devuelve el perfil activo del jugador indicado.
+perfilDeJugador :: Estado -> Jugador -> PerfilRol
+perfilDeJugador estado jugador =
+    perfilDe (rolJugador (stRoles estado) jugador)
+
+-- Actualiza la posición de un jugador dentro del estado.
+actualizarPosicionJugador :: Estado -> Jugador -> Posicion -> Estado
+actualizarPosicionJugador estado origen destino =
+    estado { stJugadores = moverJugador (stJugadores estado) origen destino }
+
+--------------------------------------------------
+-- Definición de Perfiles
+--------------------------------------------------
+
+-- Proyecta cada tipo de casilla a sus propiedades físicas.
+perfilCasilla :: Casilla -> PerfilCasilla
+perfilCasilla Pared                          = PerfilCasilla False True
+perfilCasilla Limite                         = PerfilCasilla False True
+perfilCasilla PuertaBoton                    = PerfilCasilla False True
+perfilCasilla PuertaPalanca                  = PerfilCasilla False True
+perfilCasilla Escalera                       = PerfilCasilla False True
+perfilCasilla (PuertaTemporizada abierta _ _) = PerfilCasilla abierta (not abierta)
+perfilCasilla _                              = PerfilCasilla True False
+
 -- Verifica si una casilla es pisable/atravesable
 esPisable :: Casilla -> Bool
-esPisable Pared                          = False
-esPisable Limite                         = False
-esPisable PuertaBoton                    = False
-esPisable PuertaPalanca                  = False
-esPisable Escalera                       = False
-esPisable (PuertaTemporizada abierta _ _) = abierta
-esPisable _                              = True
+esPisable = cPisable . perfilCasilla
 
 -- Verifica si una casilla actúa como suelo sólido que soporta peso encima
 esSueloSolido :: Casilla -> Bool
-esSueloSolido Pared                          = True
-esSueloSolido Limite                         = True
-esSueloSolido PuertaBoton                    = True
-esSueloSolido PuertaPalanca                  = True
-esSueloSolido Escalera                       = True
-esSueloSolido (PuertaTemporizada abierta _ _) = not abierta
-esSueloSolido _                              = False
+esSueloSolido = cSueloSolido . perfilCasilla
 
--- Un objeto puede ser empujado si esta función devuelve True.
+-- Perfil base por defecto para objetos inertes.
+perfilObjBase :: PerfilObjeto
+perfilObjBase = PerfilObjeto
+    { oEmpujable       = False
+    , oTirable         = False
+    , oMovHorizontal   = False
+    , oMovVertical     = False
+    , oAdhesivo        = False
+    , oSoloSeMueveSola = False
+    , oTieneGravedad   = False
+    , oInteractuar     = \_ _ -> Nothing
+    }
+
+-- Proyecta cada objeto a su conjunto de propiedades físicas e interacciones.
+perfilObjeto :: Objeto -> PerfilObjeto
+perfilObjeto Caja = perfilObjBase
+    { oEmpujable     = True
+    , oMovHorizontal = True
+    , oTieneGravedad = True
+    }
+perfilObjeto Barril = perfilObjBase
+    { oEmpujable     = True
+    , oTirable       = True
+    , oMovHorizontal = True
+    , oTieneGravedad = True
+    }
+perfilObjeto Cuerda = perfilObjBase
+    { oEmpujable     = True
+    , oTirable       = True
+    , oMovHorizontal = True
+    , oAdhesivo      = True
+    , oTieneGravedad = True
+    }
+perfilObjeto CajaMetal = perfilObjBase
+    { oEmpujable       = True
+    , oMovHorizontal   = True
+    , oSoloSeMueveSola = True
+    , oTieneGravedad   = True
+    }
+perfilObjeto Globo = perfilObjBase
+    { oEmpujable     = True
+    , oTirable       = True
+    , oMovHorizontal = True
+    , oMovVertical   = True
+    }
+perfilObjeto (Boton posPuerta) = perfilObjBase
+    { oInteractuar = interactuarBoton posPuerta
+    }
+perfilObjeto (Palanca posPuerta activada) = perfilObjBase
+    { oInteractuar = interactuarPalanca posPuerta activada
+    }
+
+-- Predicados delegados al perfil del objeto para mantener compatibilidad y legibilidad.
 esEmpujable :: Objeto -> Bool
-esEmpujable Caja      = True
-esEmpujable Barril    = True
-esEmpujable Cuerda    = True
-esEmpujable CajaMetal = True
-esEmpujable Globo     = True
-esEmpujable _         = False
+esEmpujable = oEmpujable . perfilObjeto
 
--- Un objeto puede ser tirado directamente por el jugador si esta función devuelve True.
 esTirable :: Objeto -> Bool
-esTirable Caja          = False
-esTirable Barril        = True
-esTirable Cuerda        = True
-esTirable CajaMetal     = False
-esTirable Globo         = True
-esTirable (Boton _)     = False
-esTirable (Palanca _ _) = False
+esTirable = oTirable . perfilObjeto
 
--- Un objeto puede desplazarse en el plano horizontal (X o Y) si esta función devuelve True.
 esMovibleHorizontalmente :: Objeto -> Bool
-esMovibleHorizontalmente Caja      = True
-esMovibleHorizontalmente Barril    = True
-esMovibleHorizontalmente Cuerda    = True
-esMovibleHorizontalmente CajaMetal = True
-esMovibleHorizontalmente Globo     = True
-esMovibleHorizontalmente _         = False
+esMovibleHorizontalmente = oMovHorizontal . perfilObjeto
 
--- Un objeto puede empujarse o tirarse en dirección vertical (Z: Arriba o Abajo).
 esMovibleVerticalmente :: Objeto -> Bool
-esMovibleVerticalmente Globo = True
-esMovibleVerticalmente _     = False
+esMovibleVerticalmente = oMovVertical . perfilObjeto
 
--- Un objeto actúa como adhesivo al tirar (une objetos contiguos en la cadena de tirón).
 esAdhesivo :: Objeto -> Bool
-esAdhesivo Cuerda = True
-esAdhesivo _      = False
+esAdhesivo = oAdhesivo . perfilObjeto
 
--- Un objeto únicamente puede moverse solo (tiene prioridad sobre las reglas de adhesión).
 soloSeMueveSola :: Objeto -> Bool
-soloSeMueveSola CajaMetal = True
-soloSeMueveSola _         = False
+soloSeMueveSola = oSoloSeMueveSola . perfilObjeto
 
--- Un objeto se ve afectado por la gravedad (cae en -Z) si esta función devuelve True.
 tieneGravedad :: Objeto -> Bool
-tieneGravedad Caja      = True
-tieneGravedad Barril    = True
-tieneGravedad Cuerda    = True
-tieneGravedad CajaMetal = True
-tieneGravedad _         = False
-
--- Indica si el rol impide la gravedad sobre el jugador.
-debeCaer :: Rol -> Bool
-debeCaer Normal  = True
-debeCaer Jetpack = False
+tieneGravedad = oTieneGravedad . perfilObjeto
 
 -- Obtiene el rol activo de un jugador; la ausencia equivale al rol normal.
 rolJugador :: MapaRoles -> Jugador -> Rol
 rolJugador roles jugador =
     M.findWithDefault Normal (identificadorJugador jugador) roles
 
--- Conserva el rol al mover a un jugador de una posición a otra.
-moverRol :: MapaRoles -> JugadorId -> MapaRoles
-moverRol roles _ = roles
+-- Asocia cada item recogible con el rol que otorga al jugador.
+rolDeItem :: Item -> Rol
+rolDeItem JetpackItem = Jetpack
+rolDeItem PicoItem    = Minero
+
+-- Perfil por defecto correspondiente al comportamiento estándar del jugador.
+perfilBase :: PerfilRol
+perfilBase = PerfilRol
+    { pAfectadoPorGravedad = True
+    , pPuedePasarCasilla   = esPisable
+    , pPuedeEmpujar        = esEmpujable
+    , pPuedeTirar          = esTirable
+    , pIgnoraPesoMetal     = False
+    , pHabilidadEspecial   = \_ _ _ -> Nothing
+    }
+
+-- Proyecta cada rol puro a su conjunto de capacidades.
+perfilDe :: Rol -> PerfilRol
+perfilDe Normal = perfilBase
+perfilDe Jetpack = perfilBase
+    { pAfectadoPorGravedad = False
+    , pHabilidadEspecial   = habilidadJetpack
+    }
+perfilDe Minero = perfilBase
+    { pHabilidadEspecial   = habilidadMinero
+    }
+
+--------------------------------------------------
+-- Habilidades de Roles e Interacciones de Objetos
+--------------------------------------------------
+
+-- Habilidad especial del jetpack: permite desplazarse verticalmente en Z y mover globos en vertical.
+habilidadJetpack :: Estado -> Jugador -> Direccion -> Maybe Estado
+habilidadJetpack estado posJugador direccion
+    | not (esDireccionVertical direccion) = Nothing
+    | otherwise = case M.lookup destino (stObjetos estado) of
+        Nothing ->
+            if esTransitablePara perfil estado destino
+            then Just (actualizarPosicionJugador estado posJugador destino)
+            else Nothing
+        Just objeto
+            | esMovibleVerticalmente objeto ->
+                if esTransitablePara perfil estado destinoObjeto
+                then Just (actualizarPosicionJugador estado posJugador destino)
+                    { stObjetos = M.insert destinoObjeto objeto (M.delete destino (stObjetos estado)) }
+                else Nothing
+        _ -> Nothing
+    where
+        perfil = perfilDeJugador estado posJugador
+        destino = sumaDireccion (posicionJugador posJugador) direccion
+        destinoObjeto = sumaDireccion destino direccion
+
+-- Habilidad especial del minero: rompe una casilla de tipo Pared adyacente y la convierte en Aire.
+-- Al comprobar específicamente `Pared`, respeta los bordes del mapa (`Limite`) y las puertas.
+habilidadMinero :: Estado -> Jugador -> Direccion -> Maybe Estado
+habilidadMinero estado posJugador direccion
+    | casillaEn estado destino == Pared && not (estaOcupada estado destino) =
+        Just estado { stMapa = M.insert destino Aire (stMapa estado) }
+    | otherwise = Nothing
+    where
+        destino = sumaDireccion (posicionJugador posJugador) direccion
+
+-- Lógica de activación irreversible de un botón sobre su puerta asociada.
+interactuarBoton :: Posicion -> Estado -> Posicion -> Maybe Estado
+interactuarBoton posPuerta estado _
+    | casillaEn estado posPuerta == PuertaBoton =
+        Just estado { stMapa = M.insert posPuerta Aire (stMapa estado) }
+    | otherwise = Nothing
+
+-- Lógica de conmutación reversible de una palanca sobre su puerta asociada.
+interactuarPalanca :: Posicion -> Bool -> Estado -> Posicion -> Maybe Estado
+interactuarPalanca posPuerta activada estado posObjeto
+    | casillaEn estado posPuerta == puertaEsperada
+      && (not activada || not (estaOcupada estado posPuerta)) =
+        let nuevaActivacion = not activada
+            nuevaPuerta = if nuevaActivacion then Aire else PuertaPalanca
+            nuevosObjetos = M.insert posObjeto (Palanca posPuerta nuevaActivacion) (stObjetos estado)
+        in Just estado
+            { stMapa    = M.insert posPuerta nuevaPuerta (stMapa estado)
+            , stObjetos = nuevosObjetos
+            }
+    | otherwise = Nothing
+    where
+        puertaEsperada = if activada then Aire else PuertaPalanca
 
 --------------------------------------------------
 -- Metodos auxiliares complejos
 --------------------------------------------------
 
--- Una cadena es válida si todos sus objetos son empujables,
+-- Una cadena es válida si todos sus objetos son empujables según el perfil,
 -- y no contiene ningún objeto que solo pueda moverse solo dentro de una cadena de varios elementos.
-cadenaEmpujable :: [Objeto] -> Bool
-cadenaEmpujable [] = False
-cadenaEmpujable objetos =
-    all esEmpujable objetos &&
-    (length objetos == 1 || not (any soloSeMueveSola objetos))
+cadenaEmpujable :: PerfilRol -> [Objeto] -> Bool
+cadenaEmpujable _ [] = False
+cadenaEmpujable perfil objetos =
+    all (pPuedeEmpujar perfil) objetos &&
+    (length objetos == 1 || pIgnoraPesoMetal perfil || not (any soloSeMueveSola objetos))
 
 -- Obtiene los objetos consecutivos que hay delante del jugador.
 cadenaObjetos :: MapaObjetos -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
@@ -270,13 +433,13 @@ cadenaObjetos objetos posicion direccion =
             cadenaObjetos objetos (sumaDireccion posicion direccion) direccion
 
 -- Construye la cadena de objetos que se arrastran al tirar:
--- el primer objeto debe ser tirable y solo se encadenan los siguientes si hay una cuerda adhesiva uniendo ambos.
-cadenaTirar :: MapaObjetos -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
-cadenaTirar objetos posInicial dirTirar =
+-- el primer objeto debe ser tirable según el perfil y solo se encadenan los siguientes si hay una cuerda adhesiva uniendo ambos.
+cadenaTirar :: PerfilRol -> MapaObjetos -> Posicion -> Direccion -> [ (Posicion, Objeto) ]
+cadenaTirar perfil objetos posInicial dirTirar =
     case M.lookup posInicial objetos of
         Nothing -> []
         Just primero
-            | not (esTirable primero) -> []
+            | not (pPuedeTirar perfil primero) -> []
             | otherwise -> (posInicial, primero) : encadenar primero (sumaDireccion posInicial dirAtras)
     where
         dirAtras = direccionContraria dirTirar
@@ -289,19 +452,16 @@ cadenaTirar objetos posInicial dirTirar =
                     | otherwise -> []
 
 -- Comprueba si una cadena de objetos puede desplazarse una casilla en 3D.
-empujePosible :: [Posicion] -> MapaCasillas -> MapaObjetos -> Posicion -> Direccion -> Bool
-empujePosible jugadores mapaJuego objetos posicion direccion =
+empujePosible :: PerfilRol -> Estado -> Posicion -> Direccion -> Bool
+empujePosible perfil estado posicion direccion =
     not (null cadena) &&
-    cadenaEmpujable objetosCadena &&
+    cadenaEmpujable perfil objetosCadena &&
     (esDireccionHorizontal direccion || all esMovibleVerticalmente objetosCadena) &&
-    esPisable (casilla destino) &&
-    not (M.member destino objetos) &&
-    destino `notElem` jugadores
+    esTransitablePara perfil estado destino
     where
-        cadena = cadenaObjetos objetos posicion direccion
+        cadena = cadenaObjetos (stObjetos estado) posicion direccion
         objetosCadena = map snd cadena
         destino = sumaDireccion (fst (last cadena)) direccion
-        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Desplaza todos los objetos de una cadena, empezando por el último.
 empujar :: MapaObjetos -> Posicion -> Direccion -> MapaObjetos
@@ -310,88 +470,84 @@ empujar objetos posicion direccion =
         (cadenaObjetos objetos posicion direccion)
 
 -- Comprueba si una cadena de objetos puede ser tirada en una dirección en 3D.
-tirarPosible :: MapaCasillas -> MapaObjetos -> Posicion -> Direccion -> Bool
-tirarPosible mapaJuego objetos posicion direccion =
+tirarPosible :: PerfilRol -> Estado -> Posicion -> Direccion -> Bool
+tirarPosible perfil estado posicion direccion =
     not (null cadena) &&
     (esDireccionHorizontal direccion && all esMovibleHorizontalmente objetosCadena ||
      esDireccionVertical direccion && all esMovibleVerticalmente objetosCadena) &&
-    (length objetosCadena == 1 || not (any soloSeMueveSola objetosCadena)) &&
-    esPisable (casilla destino) &&
-    not (M.member destino objetos)
+    (length objetosCadena == 1 || pIgnoraPesoMetal perfil || not (any soloSeMueveSola objetosCadena)) &&
+    pPuedePasarCasilla perfil (casillaEn estado destino) &&
+    not (M.member destino (stObjetos estado))
     where
-        cadena = cadenaTirar objetos posicion direccion
+        cadena = cadenaTirar perfil (stObjetos estado) posicion direccion
         objetosCadena = map snd cadena
         destino = sumaDireccion posicion direccion
-        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Desplaza hacia el jugador todos los objetos enganchados en la cadena de tirón, empezando por el más cercano.
-tirar :: MapaObjetos -> Posicion -> Direccion -> MapaObjetos
-tirar objetos posicion direccion =
+tirar :: PerfilRol -> MapaObjetos -> Posicion -> Direccion -> MapaObjetos
+tirar perfil objetos posicion direccion =
     foldl (flip (desplazarObjeto direccion)) objetos
-        (cadenaTirar objetos posicion direccion)
+        (cadenaTirar perfil objetos posicion direccion)
 
 -- Comprueba si una posición tiene una escalera adyacente en el plano horizontal (X o Y).
-estaAgarradoAEscalera :: MapaCasillas -> Posicion -> Bool
-estaAgarradoAEscalera mapaJuego pos =
-    any (\dir -> M.findWithDefault Limite (sumaDireccion pos dir) mapaJuego == Escalera)
+estaAgarradoAEscalera :: Estado -> Posicion -> Bool
+estaAgarradoAEscalera estado pos =
+    any (\dir -> casillaEn estado (sumaDireccion pos dir) == Escalera)
         [Derecha, Izquierda, Adelante, Atras]
 
 -- Sube un único bloque por turno: si la escalera continúa arriba, sube 1 en Z junto a ella;
 -- si es el último tramo, corona colocándose encima.
-subirPorEscalera :: [Posicion] -> MapaCasillas -> MapaObjetos -> Posicion -> Posicion -> Maybe Posicion
-subirPorEscalera jugadores mapaJuego objetos posJugador posEscalera =
+subirPorEscalera :: PerfilRol -> Estado -> Posicion -> Posicion -> Maybe Posicion
+subirPorEscalera perfil estado posJugador posEscalera =
     let arribaJugador  = sumaDireccion posJugador Arriba
         arribaEscalera = sumaDireccion posEscalera Arriba
-    in if not (esLibre arribaJugador)
+    in if not (esTransitablePara perfil estado arribaJugador)
        then Nothing
-       else case M.findWithDefault Limite arribaEscalera mapaJuego of
+       else case casillaEn estado arribaEscalera of
            Escalera -> Just arribaJugador
-           _        -> if esLibre arribaEscalera then Just arribaEscalera else Nothing
-    where
-        esLibre p = esPisable (M.findWithDefault Limite p mapaJuego)
-                    && not (M.member p objetos)
-                    && p `notElem` jugadores
+           _        -> if esTransitablePara perfil estado arribaEscalera then Just arribaEscalera else Nothing
 
 -- Comprueba si una posición tiene apoyo real hasta tocar suelo sólido, escalera o un objeto sin gravedad (ej. Globo)
-tieneApoyo :: [Posicion] -> MapaCasillas -> MapaObjetos -> Posicion -> Bool
-tieneApoyo jugadores mapaJuego objetos pos
-    | esSueloSolido casillaDebajo = True
-    | pos `elem` jugadores && estaAgarradoAEscalera mapaJuego pos = True
-    | Just objDebajo <- M.lookup debajo objetos =
-        not (tieneGravedad objDebajo) || tieneApoyo jugadores mapaJuego objetos debajo
-    | debajo `elem` jugadores =
-        tieneApoyo jugadores mapaJuego objetos debajo
+tieneApoyo :: Estado -> Posicion -> Bool
+tieneApoyo estado pos
+    | esSueloSolido (casillaEn estado debajo) = True
+    | pos `elem` posicionesJugadores (stJugadores estado) && estaAgarradoAEscalera estado pos = True
+    | Just objDebajo <- M.lookup debajo (stObjetos estado) =
+        not (tieneGravedad objDebajo) || tieneApoyo estado debajo
+    | debajo `elem` posicionesJugadores (stJugadores estado) =
+        tieneApoyo estado debajo
     | otherwise = False
     where
         debajo = sumaDireccion pos Abajo
-        casillaDebajo = M.findWithDefault Limite debajo mapaJuego
 
 -- Aplica un único paso de gravedad (1 casilla en -Z) a los jugadores y objetos sin apoyo.
 aplicarGravedadPaso :: Estado -> Estado
-aplicarGravedadPaso estado@(jugadores, mapaJuego, objetos, roles, items) =
-    (nuevosJugadores, mapaJuego, nuevosObjetos, roles, items)
+aplicarGravedadPaso estado =
+    estado
+        { stJugadores = nuevosJugadores
+        , stObjetos   = nuevosObjetos
+        }
     where
         caerJugador j
-            | not (debeCaer (rolJugador roles j)) = j
-            | tieneApoyo posiciones mapaJuego objetos pos = j
+            | not (pAfectadoPorGravedad (perfilDeJugador estado j)) = j
+            | tieneApoyo estado pos = j
             | otherwise = (identificadorJugador j, sumaDireccion pos Abajo)
             where pos = posicionJugador j
-        posiciones = posicionesJugadores jugadores
-        nuevosJugadores = map caerJugador jugadores
+        nuevosJugadores = map caerJugador (stJugadores estado)
 
-        nuevosObjetos = M.foldrWithKey moverSiCae M.empty objetos
+        nuevosObjetos = M.foldrWithKey moverSiCae M.empty (stObjetos estado)
         moverSiCae pos obj acc
-            | tieneGravedad obj && not (tieneApoyo posiciones mapaJuego objetos pos) =
+            | tieneGravedad obj && not (tieneApoyo estado pos) =
                 M.insert (sumaDireccion pos Abajo) obj acc
             | otherwise =
                 M.insert pos obj acc
 
 -- Actualiza el estado de las puertas temporizadas después de cada acción.
 actualizarPuertas :: Estado -> Estado
-actualizarPuertas (jugadores, mapaJuego, objetos, roles, items) =
-    (jugadores, M.mapWithKey actualizar mapaJuego, objetos, roles, items)
+actualizarPuertas estado =
+    estado { stMapa = M.mapWithKey actualizar (stMapa estado) }
     where
-        ocupadas = posicionesJugadores jugadores ++ M.keys objetos
+        ocupadas = posicionesJugadores (stJugadores estado) ++ M.keys (stObjetos estado)
 
         actualizar posicion (PuertaTemporizada abierta tiempo duracion) =
             actualizarPuerta posicion abierta tiempo duracion
@@ -416,7 +572,7 @@ actualizarPuertas (jugadores, mapaJuego, objetos, roles, items) =
             not (null placas) && all (`elem` ocupadas) placas
             where
                 placas = [ posicionPlaca
-                         | (posicionPlaca, PlacaActivadoraTemporizada puerta) <- M.toList mapaJuego
+                         | (posicionPlaca, PlacaActivadoraTemporizada puerta) <- M.toList (stMapa estado)
                          , puerta == posicion
                          ]
 
@@ -428,204 +584,98 @@ actualizacionFinal =
 
 -- Ejecuta directamente la acción correspondiente y aplica la actualización final.
 ejecutarAccion :: Estado -> Accion -> Maybe Estado
-ejecutarAccion estado (AccionAvanzar posJugador direccion) =
-    fmap actualizacionFinal (accionAvanzar estado posJugador direccion)
-ejecutarAccion estado (AccionMoverObjeto posJugador direccion) =
-    fmap actualizacionFinal (accionMoverObjeto estado posJugador direccion)
-ejecutarAccion estado (AccionInteractuarObjeto posJugador direccion) =
-    fmap actualizacionFinal (accionInteractuarObjeto estado posJugador direccion)
-ejecutarAccion estado (AccionUsarRol posJugador direccion) =
-    fmap actualizacionFinal (accionUsarRol estado posJugador direccion)
+ejecutarAccion estado accion =
+    fmap actualizacionFinal $ case accion of
+        AccionAvanzar posJugador direccion           -> accionAvanzar estado posJugador direccion
+        AccionMoverObjeto posJugador direccion       -> accionMoverObjeto estado posJugador direccion
+        AccionInteractuarObjeto posJugador direccion -> accionInteractuarObjeto estado posJugador direccion
+        AccionUsarRol posJugador direccion           -> accionUsarRol estado posJugador direccion
 
 accionAvanzar :: Estado -> Jugador -> Direccion -> Maybe Estado
-accionAvanzar (jugadores, mapaJuego, objetos, roles, items) posJugador direccion
+accionAvanzar estado posJugador direccion
     -- El jugador debe existir en el estado.
-    | posJugador `notElem` jugadores =
+    | posJugador `notElem` stJugadores estado =
         Nothing
     -- Si está agarrado a una escalera, puede bajar 1 peldaño en Z con Abajo.
-    | direccion == Abajo && estaAgarradoAEscalera mapaJuego (posicionJugador posJugador) =
-        if esPisable (casilla posSiguiente) && not (M.member posSiguiente objetos) && posSiguiente `notElem` posicionesJugadores jugadores
-        then Just (moverJugador jugadores posJugador posSiguiente, mapaJuego, objetos, roles, items)
+    | direccion == Abajo && estaAgarradoAEscalera estado posActual =
+        if esTransitablePara perfil estado posSiguiente
+        then Just (actualizarPosicionJugador estado posJugador posSiguiente)
         else Nothing
     -- El resto de movimientos verticales directos (Arriba, o Abajo sin escalera) no están permitidos.
     | esDireccionVertical direccion =
         Nothing
     -- Si hay una escalera delante, se intenta subir 1 peldaño por ella.
-    | casilla posSiguiente == Escalera =
-        case subirPorEscalera (posicionesJugadores jugadores) mapaJuego objetos posActual posSiguiente of
-            Just destinoSubida ->
-                Just
-                (
-                    moverJugador jugadores posJugador destinoSubida,
-                    mapaJuego,
-                    objetos,
-                    roles,
-                    items
-                )
-            Nothing -> Nothing
-    -- No se puede avanzar hacia una casilla sólida.
-    | not (esPisable (casilla posSiguiente)) =
+    | casillaEn estado posSiguiente == Escalera =
+        fmap (actualizarPosicionJugador estado posJugador)
+            (subirPorEscalera perfil estado posActual posSiguiente)
+    -- No se puede avanzar hacia una casilla sólida ni ocupada según el perfil del rol.
+    | not (esTransitablePara perfil estado posSiguiente) =
         Nothing
-    -- No se puede atravesar un objeto.
-    | M.member posSiguiente items =
-        case M.lookup posSiguiente items of
-            Just JetpackItem ->
-                Just
-                (
-                    moverJugador jugadores posJugador posSiguiente,
-                    mapaJuego,
-                    objetos,
-                    M.insert (identificadorJugador posJugador) Jetpack roles,
-                    M.delete posSiguiente items
-                )
-            _ -> Nothing
-    -- Los jugadores no pueden ocupar la misma posición.
-    | posSiguiente `elem` posicionesJugadores jugadores =
-        Nothing
+    -- Al pisar un item recogible, el jugador lo recoge y adopta su rol asociado.
+    | Just item <- M.lookup posSiguiente (stItems estado) =
+        Just (actualizarPosicionJugador estado posJugador posSiguiente)
+            { stRoles = M.insert (identificadorJugador posJugador) (rolDeItem item) (stRoles estado)
+            , stItems = M.delete posSiguiente (stItems estado)
+            }
     -- Si ninguna restricción lo impide, el jugador avanza.
     | otherwise =
-        Just 
-        (
-            moverJugador jugadores posJugador posSiguiente, 
-            mapaJuego, 
-            objetos,
-            roles,
-            items
-        )
+        Just (actualizarPosicionJugador estado posJugador posSiguiente)
     where
+        perfil = perfilDeJugador estado posJugador
         posActual = posicionJugador posJugador
         posSiguiente = sumaDireccion posActual direccion
-        casilla p = M.findWithDefault Limite p mapaJuego
 
 -- Mueve un objeto empujándolo o tirando de él.
 accionMoverObjeto :: Estado -> Jugador -> Direccion -> Maybe Estado
-accionMoverObjeto (jugadores, mapaJuego, objetos, roles, items) posJugador direccion
+accionMoverObjeto estado posJugador direccion
     -- El jugador debe existir en el estado.
-    | posJugador `notElem` jugadores =
+    | posJugador `notElem` stJugadores estado =
         Nothing
-    -- No se puede mover hacia una casilla sólida.
-    | not (esPisable (casilla posSiguiente)) =
+    -- No se puede mover hacia una casilla sólida ni ocupada por otro jugador según el perfil del rol.
+    | not (pPuedePasarCasilla perfil (casillaEn estado posSiguiente)) =
         Nothing
-    -- Los jugadores no pueden ocupar la misma posición.
-    | posSiguiente `elem` posicionesJugadores jugadores =
+    | posSiguiente `elem` posicionesJugadores (stJugadores estado) =
         Nothing
     -- Si hay un objeto delante, se intenta empujarlo.
-    | M.member posSiguiente objetos && empujePosible (posicionesJugadores jugadores) mapaJuego objetos posSiguiente direccion =
-        Just
-            (
-                moverJugador jugadores posJugador posSiguiente,
-                mapaJuego,
-                empujar objetos posSiguiente direccion,
-                roles,
-                items
-            )
+    | M.member posSiguiente (stObjetos estado) && empujePosible perfil estado posSiguiente direccion =
+        Just (actualizarPosicionJugador estado posJugador posSiguiente)
+            { stObjetos = empujar (stObjetos estado) posSiguiente direccion }
     -- Si hay un objeto detrás, se intenta tirar de él.
-    | not (M.member posSiguiente objetos) && M.member posAnterior objetos && tirarPosible mapaJuego objetos posAnterior direccion =
-        Just
-            (
-                moverJugador jugadores posJugador posSiguiente,
-                mapaJuego,
-                tirar objetos posAnterior direccion,
-                roles,
-                items
-            )
+    | not (M.member posSiguiente (stObjetos estado))
+      && M.member posAnterior (stObjetos estado)
+      && tirarPosible perfil estado posAnterior direccion =
+        Just (actualizarPosicionJugador estado posJugador posSiguiente)
+            { stObjetos = tirar perfil (stObjetos estado) posAnterior direccion }
     -- Si no se puede empujar ni tirar, la acción falla.
     | otherwise =
         Nothing
     where
+        perfil = perfilDeJugador estado posJugador
         posActual = posicionJugador posJugador
         posSiguiente = sumaDireccion posActual direccion
         posAnterior = sumaDireccion posActual (direccionContraria direccion)
-        casilla p = M.findWithDefault Limite p mapaJuego
 
--- Interactúa con un botón o una palanca situados delante del jugador.
+-- Interactúa con un botón o una palanca situados delante del jugador delegando en su perfil.
 accionInteractuarObjeto :: Estado -> Jugador -> Direccion -> Maybe Estado
-accionInteractuarObjeto (jugadores, mapaJuego, objetos, roles, items) posJugador direccion
+accionInteractuarObjeto estado posJugador direccion
     -- El jugador debe existir en el estado.
-    | posJugador `notElem` jugadores =
+    | posJugador `notElem` stJugadores estado =
         Nothing
     -- Se comprueba el mecanismo situado delante del jugador.
     | otherwise =
-        case M.lookup posObjeto objetos of
-            Just (Boton posPuerta)
-                -- Un botón abre una puerta cerrada de forma permanente.
-                | M.lookup posPuerta mapaJuego == Just PuertaBoton ->
-                    Just
-                    (
-                        jugadores, 
-                        M.insert posPuerta Aire mapaJuego, 
-                        objetos,
-                        roles,
-                        items
-                    )
-            Just (Palanca posPuerta activada) ->
-                -- La palanca solo cambia si coincide con el estado de su puerta.
-                if M.lookup posPuerta mapaJuego ==
-                    Just (if activada then Aire else PuertaPalanca)
-                    && (not activada || (posPuerta `notElem` posicionesJugadores jugadores && not (M.member posPuerta objetos)))
-                then
-                    let nuevaActivacion = not activada
-                        nuevaPuerta = if nuevaActivacion
-                            then Aire
-                            else PuertaPalanca
-                        nuevosObjetos = M.insert posObjeto
-                            (Palanca posPuerta nuevaActivacion) objetos
-                    in Just 
-                    (
-                        jugadores, 
-                        M.insert posPuerta nuevaPuerta mapaJuego,
-                        nuevosObjetos,
-                        roles,
-                        items
-                    )
-                else
-                    Nothing
-            -- Cualquier otro objeto no permite interacción.
-            _ -> Nothing
+        case M.lookup posObjeto (stObjetos estado) of
+            Just objeto -> oInteractuar (perfilObjeto objeto) estado posObjeto
+            Nothing     -> Nothing
     where
         posObjeto = sumaDireccion (posicionJugador posJugador) direccion
 
--- Usa el rol activo del jugador. El jetpack solo permite subir y bajar verticalmente.
+-- Usa la habilidad especial definida en el perfil del rol activo del jugador.
 accionUsarRol :: Estado -> Jugador -> Direccion -> Maybe Estado
-accionUsarRol (jugadores, mapaJuego, objetos, roles, items) posJugador direccion
-    | posJugador `notElem` jugadores =
+accionUsarRol estado posJugador direccion
+    | posJugador `notElem` stJugadores estado =
         Nothing
     | otherwise =
-        case rolJugador roles posJugador of
-            -- Revisa primero el comportamiento especial del jetpack.
-            Jetpack ->
-                if not (esDireccionVertical direccion)
-                then Nothing
-                else case M.lookup destino objetos of
-                    Nothing ->
-                        if casillaLibre destino
-                        then Just (moverJugador jugadores posJugador destino,
-                                   mapaJuego, objetos, roles, items)
-                        else Nothing
-                    Just objeto
-                        | esMovibleVerticalmente objeto ->
-                            if casillaLibre destinoObjeto && esPisable (casilla destinoObjeto)
-                            then Just
-                                (
-                                    moverJugador jugadores posJugador destino,
-                                    mapaJuego,
-                                    M.insert destinoObjeto objeto (M.delete destino objetos),
-                                    roles,
-                                    items
-                                )
-                            else Nothing
-                    _ -> Nothing
-            -- Si aparece otro rol, se revisa antes de llegar al caso general.
-            -- De momento, el rol normal no tiene ninguna acción especial.
-            Normal -> Nothing
-    where
-        destino = sumaDireccion (posicionJugador posJugador) direccion
-        destinoObjeto = sumaDireccion destino direccion
-        casilla p = M.findWithDefault Limite p mapaJuego
-        casillaLibre p =
-            esPisable (casilla p)
-            && not (M.member p objetos)
-            && p `notElem` posicionesJugadores jugadores
+        pHabilidadEspecial (perfilDeJugador estado posJugador) estado posJugador direccion
 
 -- Indica si el jugador puede realizar la acción.
 accionPosible :: Estado -> Accion -> Bool
@@ -655,10 +705,6 @@ desplazarObjeto direccion (posicionObjeto, objeto) objetos =
     moverObjeto objetos posicionObjeto
         (sumaDireccion posicionObjeto direccion)
 
-desplazar :: Posicion -> Posicion -> Posicion -> Posicion
-desplazar origen destino posicion =
-    if posicion == origen then destino else posicion
-
 direccionContraria :: Direccion -> Direccion
 direccionContraria Arriba    = Abajo
 direccionContraria Abajo     = Arriba
@@ -681,12 +727,16 @@ jugadorConId :: JugadorId -> Posicion -> Jugador
 jugadorConId identificador posicion =
     (identificador, posicion)
 
+-- Constructor auxiliar para instanciar niveles de Sokoban con el registro Estado.
+crearNivel :: [Jugador] -> MapaCasillas -> MapaObjetos -> MapaRoles -> MapaItems -> Sokoban
+crearNivel js mc mo mr mi = Sok (Estado js mc mo mr mi)
+
 -- Ejemplos de Sokoban 3D con solución
 conSolucion :: [Sokoban]
 conSolucion =
     [
-    Sok ([jugadorConId 1 (0, 0, 0)]
-        , M.unions
+    crearNivel [jugadorConId 1 (0, 0, 0)]
+        (M.unions
             [
               M.fromList [ ((3, 0, 0), Placa)                                  -- 1. Objetivo CajaMetal
                          , ((8, 0, 0), Placa)                                  -- 6. Objetivo Barril que cae desde z=4
@@ -726,8 +776,8 @@ conSolucion =
                          ]
 
             , mapa 10 3 6
-            ]
-        , M.fromList
+            ])
+        (M.fromList
             [ ((1, 0, 0), CajaMetal)
             , ((3, 1, 0), Palanca (5, 2, 0) False)
             , ((7, 2, 1), Globo)
@@ -736,33 +786,32 @@ conSolucion =
             , ((3, 1, 2), Barril)
             , ((5, 0, 2), Boton (8, 2, 4))
             , ((8, 0, 4), Barril)
-            ],
-        M.empty,
+            ])
         M.empty
-        ),
+        M.empty,
 
     -- La fila de barril, cuerda, barril y cuerda se puede tirar desde la segunda columna.
-    Sok ([jugadorConId 1 (1, 1, 0)],
-        M.union
+    crearNivel [jugadorConId 1 (1, 1, 0)]
+        (M.union
         (M.fromList [((1, 0, 0), Placa), ((1, 1, 0), Placa)])
-        (mapa 6 2 1),
-        M.fromList [((2, 1, 0), Barril), ((3, 1, 0), Cuerda),
-                    ((4, 1, 0), Barril), ((5, 1, 0), Cuerda)],
+        (mapa 6 2 1))
+        (M.fromList [((2, 1, 0), Barril), ((3, 1, 0), Cuerda),
+                    ((4, 1, 0), Barril), ((5, 1, 0), Cuerda)])
+        M.empty
         M.empty,
-        M.empty),
 
     -- Los dos jugadores empujan sus cajas y luego pisan sus respectivas placas.
-    Sok ([jugadorConId 1 (1, 0, 0), jugadorConId 2 (6, 0, 0)],
-        M.union
+    crearNivel [jugadorConId 1 (1, 0, 0), jugadorConId 2 (6, 0, 0)]
+        (M.union
         (M.fromList [((0, 0, 0), Placa), ((3, 0, 0), Placa),
                         ((4, 0, 0), Placa), ((7, 0, 0), Placa)])
-        (mapa 8 1 1),
-        M.fromList [((2, 0, 0), Caja), ((5, 0, 0), Caja)],
+        (mapa 8 1 1))
+        (M.fromList [((2, 0, 0), Caja), ((5, 0, 0), Caja)])
+        M.empty
         M.empty,
-        M.empty),
 
-    Sok ([jugadorConId 1 (4, 3, 0)]
-        , M.union
+    crearNivel [jugadorConId 1 (4, 3, 0)]
+        (M.union
             (M.fromList
               [ ((0, 3, 0), Placa)
               , ((1, 3, 0), Pared)
@@ -787,51 +836,48 @@ conSolucion =
               , ((5, 3, 2), Pared)
               , ((5, 3, 3), Placa)
               ])
-            (mapa 6 4 4)
-        , M.fromList
+            (mapa 6 4 4))
+        (M.fromList
             [ ((0, 0, 0), Barril)
             , ((5, 0, 0), Globo)
-            ],
-        M.empty,
+            ])
         M.empty
-        ),
+        M.empty,
             
     -- El jugador tiene que usar la cuerda para sacar la caja de la esquina y empujarla hasta la placa.
-    Sok ([jugadorConId 1 (4, 3, 0)]
-        , M.union
+    crearNivel [jugadorConId 1 (4, 3, 0)]
+        (M.union
             (M.fromList
               [ ((0, 0, 0), Placa)
               , ((2, 0, 0), Placa)
               , ((4, 0, 0), Placa)
               ])
-            (mapa 5 4 1)
-        , M.fromList
+            (mapa 5 4 1))
+        (M.fromList
             [ ((0, 3, 0), Caja)
             , ((3, 0, 0), Cuerda)
-            ],
-        M.empty,
+            ])
         M.empty
-        ),
+        M.empty,
 
     -- El jugador tiene que usar dos globos para subir a la placa.
-    Sok ([jugadorConId 1 (1, 1, 0)]
-        , M.union
+    crearNivel [jugadorConId 1 (1, 1, 0)]
+        (M.union
             (M.fromList
               [ ((0, 0, 0), Escalera)
               , ((0, 1, 5), Pared)
               , ((0, 1, 6), Placa)
               ])
-            (mapa 2 2 7)
-        , M.fromList
+            (mapa 2 2 7))
+        (M.fromList
             [ ((1, 0, 0), Globo)
             , ((1, 1, 2), Globo)
-            ],
-        M.empty,
+            ])
         M.empty
-        ),
+        M.empty,
 
-    Sok ([jugadorConId 1 (5, 2, 0)]
-        , M.union
+    crearNivel [jugadorConId 1 (5, 2, 0)]
+        (M.union
             (M.fromList
               [ ((0, 0, 0), Escalera)
               , ((0, 0, 1), Escalera)
@@ -904,96 +950,92 @@ conSolucion =
               , ((5, 0, 0), Escalera)
               , ((5, 5, 0), Escalera)
               ])
-            (mapa 6 6 7)
-        , M.fromList
+            (mapa 6 6 7))
+        (M.fromList
             [ ((1, 5, 0), Globo)
             , ((4, 0, 0), Globo)
             , ((5, 4, 0), Globo)
-            ],
-        M.empty,
+            ])
         M.empty
-        ),
+        M.empty,
 
     -- El jugador recoge el jetpack y usa su rol para subir hasta la placa.
-    Sok ([jugadorConId 1 (0, 0, 0)],
-        M.union
+    crearNivel [jugadorConId 1 (0, 0, 0)]
+        (M.union
         (M.fromList [((1, 0, 2), Placa)])
-        (mapa 3 1 3),
-        M.empty,
-        M.empty,
-        M.fromList [((1, 0, 0), JetpackItem)]
-        )
+        (mapa 3 1 3))
+        M.empty
+        M.empty
+        (M.fromList [((1, 0, 0), JetpackItem)])
     ]
 
 -- Ejemplos sencillos de Sokoban 3D sin solución.
 sinSolucion :: [Sokoban]
 sinSolucion =
     [
--- La placa está aislada por una pared.
-        Sok ([jugadorConId 1 (0, 0, 0)], M.fromList [((0, 0, 0), Aire), ((2, 0, 0), Placa)], M.empty, M.empty, M.empty),
+        -- La placa está aislada por una pared.
+        crearNivel [jugadorConId 1 (0, 0, 0)] (M.fromList [((0, 0, 0), Aire), ((2, 0, 0), Placa)]) M.empty M.empty M.empty,
 
         -- La caja está contra una pared y no puede llegar a la placa.
-        Sok ([jugadorConId 1 (0, 0, 0)],
-            M.fromList
+        crearNivel [jugadorConId 1 (0, 0, 0)]
+            (M.fromList
             [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((2, 0, 0), Pared),
-             ((3, 0, 0), Placa)],
-            M.fromList [((1, 0, 0), Caja)],
+             ((3, 0, 0), Placa)])
+            (M.fromList [((1, 0, 0), Caja)])
+            M.empty
             M.empty,
-            M.empty),
 
         -- La puerta está cerrada y no hay ningún botón que pueda abrirla.
-        Sok ([jugadorConId 1 (0, 0, 0)],
-            M.fromList
-            [((0, 0, 0), Aire), ((1, 0, 0), PuertaBoton), ((2, 0, 0), Placa)],
+        crearNivel [jugadorConId 1 (0, 0, 0)]
+            (M.fromList
+            [((0, 0, 0), Aire), ((1, 0, 0), PuertaBoton), ((2, 0, 0), Placa)])
+            M.empty
+            M.empty
             M.empty,
-            M.empty,
-            M.empty),
 
         -- La caja de metal no puede empujar la caja que tiene delante hasta la placa.
-        Sok ([jugadorConId 1 (0, 0, 0)],
-            M.fromList
+        crearNivel [jugadorConId 1 (0, 0, 0)]
+            (M.fromList
             [((0, 0, 0), Aire), ((1, 0, 0), Aire), ((2, 0, 0), Aire),
-             ((3, 0, 0), Placa)],
-            M.fromList [((1, 0, 0), CajaMetal), ((2, 0, 0), Caja)],
+             ((3, 0, 0), Placa)])
+            (M.fromList [((1, 0, 0), CajaMetal), ((2, 0, 0), Caja)])
+            M.empty
             M.empty,
-            M.empty),
 
         -- La pared separa al segundo jugador de su placa y no puede completar el nivel.
-        Sok ([jugadorConId 1 (1, 0, 0), jugadorConId 2 (6, 0, 0)],
-            M.union
+        crearNivel [jugadorConId 1 (1, 0, 0), jugadorConId 2 (6, 0, 0)]
+            (M.union
             (M.fromList [((0, 0, 0), Placa), ((3, 0, 0), Placa),
                          ((4, 0, 0), Placa), ((7, 0, 0), Pared),
                          ((8, 0, 0), Placa)])
-            (mapa 9 1 1),
-            M.fromList [((2, 0, 0), Caja), ((5, 0, 0), Caja)],
+            (mapa 9 1 1))
+            (M.fromList [((2, 0, 0), Caja), ((5, 0, 0), Caja)])
+            M.empty
             M.empty,
-            M.empty),
 
         -- La puerta se cierra antes de que el jugador superior pueda llegar a la placa final.
-        Sok ([jugadorConId 1 (0, 0, 0), jugadorConId 2 (0, 1, 0)],
-            M.fromList
+        crearNivel [jugadorConId 1 (0, 0, 0), jugadorConId 2 (0, 1, 0)]
+            (M.fromList
             [((0, 0, 0), Aire), ((1, 0, 0), Aire),
              ((2, 0, 0), PlacaActivadoraTemporizada (6, 0, 0)),
              ((3, 0, 0), Aire), ((4, 0, 0), Aire), ((5, 0, 0), Aire),
              ((6, 0, 0), PuertaTemporizada False (-1) 2),
              ((7, 0, 0), Aire), ((8, 0, 0), Placa),
              ((0, 1, 0), Aire), ((1, 1, 0), Aire),
-             ((2, 1, 0), PlacaActivadoraTemporizada (6, 0, 0))],
+             ((2, 1, 0), PlacaActivadoraTemporizada (6, 0, 0))])
+             M.empty
+             M.empty
              M.empty,
-             M.empty,
-              M.empty),
 
         -- Sin jetpack, el jugador normal no puede volar hasta la placa situada dos niveles mas arriba.
-        Sok ([jugadorConId 1 (0, 0, 0)],
-             M.union
+        crearNivel [jugadorConId 1 (0, 0, 0)]
+             (M.union
              (M.fromList [((1, 0, 2), Placa)])
-             (mapa 3 1 3),
-             M.empty,
-             M.empty,
-             M.empty)
+             (mapa 3 1 3))
+             M.empty
+             M.empty
+             M.empty
     ]
-
-
 
 --------------------------------------------------
 -- Exportación de solución a JSON para visor.html
@@ -1026,15 +1068,17 @@ objetoJson ((x, y, z), obj) =
 itemJson :: (Posicion, Item) -> String
 itemJson ((x, y, z), JetpackItem) =
     "{\"pos\":[" ++ show x ++ "," ++ show y ++ "," ++ show z ++ "],\"tipo\":\"Jetpack\"}"
+itemJson ((x, y, z), PicoItem) =
+    "{\"pos\":[" ++ show x ++ "," ++ show y ++ "," ++ show z ++ "],\"tipo\":\"Pico\"}"
 
 estadoAJson :: Sokoban -> String
-estadoAJson (Sok (jugadores, mapaJuego, objetos, roles, items)) =
+estadoAJson (Sok estado) =
     "{"
-    ++ "\"jugadores\":[" ++ intercalar "," (map jugadorJson jugadores) ++ "],"
-    ++ "\"mapa\":[" ++ intercalar "," (map casillaJson (M.toList mapaJuego)) ++ "],"
-    ++ "\"objetos\":[" ++ intercalar "," (map objetoJson (M.toList objetos)) ++ "],"
-    ++ "\"items\":[" ++ intercalar "," (map itemJson (M.toList items)) ++ "],"
-    ++ "\"roles\":[" ++ intercalar "," (map rolJson (M.toList roles)) ++ "]"
+    ++ "\"jugadores\":[" ++ intercalar "," (map jugadorJson (stJugadores estado)) ++ "],"
+    ++ "\"mapa\":[" ++ intercalar "," (map casillaJson (M.toList (stMapa estado))) ++ "],"
+    ++ "\"objetos\":[" ++ intercalar "," (map objetoJson (M.toList (stObjetos estado))) ++ "],"
+    ++ "\"items\":[" ++ intercalar "," (map itemJson (M.toList (stItems estado))) ++ "],"
+    ++ "\"roles\":[" ++ intercalar "," (map rolJson (M.toList (stRoles estado))) ++ "]"
     ++ "}"
     where
         posJson (x, y, z) = "[" ++ show x ++ "," ++ show y ++ "," ++ show z ++ "]"
@@ -1070,9 +1114,6 @@ guardarSoluciones ruta listaPasos =
         intercalar _ [x]    = x
         intercalar s (x:xs) = x ++ s ++ intercalar s xs
 
-
-
-
 {- Para compilar
 
 ghci
@@ -1097,4 +1138,4 @@ guardarSolucion "solucion.json" camino
 :m + Resolutores.TakyonDFS Juegos.Juego_Sokoban Data.Maybe
 guardarSoluciones "soluciones.json" (mapMaybe resolutor sinSolucion)
 
--}  
+-}
